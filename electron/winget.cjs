@@ -1,0 +1,477 @@
+const { spawn } = require('node:child_process');
+const { EventEmitter } = require('node:events');
+
+const ANSI_PATTERN = /\u001b\[[0-?]*[ -/]*[@-~]/g;
+
+function sanitizeWingetOutput(text) {
+  return String(text ?? '')
+    .replace(ANSI_PATTERN, '')
+    .replace(/\r\n/g, '\n')
+    .replace(/\r/g, '\n')
+    .replace(/\x08/g, '')
+    .replace(/\u001b/g, '')
+    .replace(/^\n+/, '')
+    .trimEnd();
+}
+
+function isCombiningCodePoint(codePoint) {
+  return (
+    (codePoint >= 0x0300 && codePoint <= 0x036f) ||
+    (codePoint >= 0x1ab0 && codePoint <= 0x1aff) ||
+    (codePoint >= 0x1dc0 && codePoint <= 0x1dff) ||
+    (codePoint >= 0x20d0 && codePoint <= 0x20ff) ||
+    (codePoint >= 0xfe20 && codePoint <= 0xfe2f)
+  );
+}
+
+function isWideCodePoint(codePoint) {
+  return (
+    (codePoint >= 0x1100 && codePoint <= 0x115f) ||
+    codePoint === 0x2329 ||
+    codePoint === 0x232a ||
+    (codePoint >= 0x2e80 && codePoint <= 0xa4cf && codePoint !== 0x303f) ||
+    (codePoint >= 0xac00 && codePoint <= 0xd7a3) ||
+    (codePoint >= 0xf900 && codePoint <= 0xfaff) ||
+    (codePoint >= 0xfe10 && codePoint <= 0xfe19) ||
+    (codePoint >= 0xfe30 && codePoint <= 0xfe6f) ||
+    (codePoint >= 0xff00 && codePoint <= 0xff60) ||
+    (codePoint >= 0xffe0 && codePoint <= 0xffe6)
+  );
+}
+
+function getDisplayWidth(text) {
+  let width = 0;
+
+  for (const char of String(text ?? '')) {
+    const codePoint = char.codePointAt(0);
+    if (!codePoint || isCombiningCodePoint(codePoint)) {
+      continue;
+    }
+
+    width += isWideCodePoint(codePoint) ? 2 : 1;
+  }
+
+  return width;
+}
+
+function getStringIndexAtDisplayColumn(line, targetColumn) {
+  let displayColumn = 0;
+  let stringIndex = 0;
+
+  for (const char of String(line ?? '')) {
+    if (displayColumn >= targetColumn) {
+      return stringIndex;
+    }
+
+    displayColumn += getDisplayWidth(char);
+    stringIndex += char.length;
+  }
+
+  return String(line ?? '').length;
+}
+
+function findHeaderLabelStart(headerLine, labels) {
+  const candidates = Array.isArray(labels) ? labels : [labels];
+  const starts = candidates
+    .map((label) => {
+      const index = headerLine.indexOf(label);
+      return index >= 0 ? getDisplayWidth(headerLine.slice(0, index)) : -1;
+    })
+    .filter((start) => start >= 0);
+
+  return starts.length > 0 ? Math.min(...starts) : -1;
+}
+
+function getHeaderStarts(headerLine) {
+  const headerSets = [
+    [
+      ['name', 'Name'],
+      ['id', ['Id', 'ID']],
+      ['installedVersion', 'Version'],
+      ['availableVersion', 'Available'],
+      ['source', 'Source']
+    ],
+    [
+      ['name', '이름'],
+      ['id', ['장치 ID', 'ID']],
+      ['installedVersion', '버전'],
+      ['availableVersion', '사용 가능'],
+      ['source', '원본']
+    ]
+  ];
+
+  for (const headers of headerSets) {
+    const columns = headers
+      .map(([key, labels]) => ({ key, start: findHeaderLabelStart(headerLine, labels) }))
+      .filter((column) => column.start >= 0)
+      .sort((a, b) => a.start - b.start);
+
+    const keys = new Set(columns.map((column) => column.key));
+    if (
+      keys.has('name') &&
+      keys.has('id') &&
+      keys.has('installedVersion') &&
+      keys.has('availableVersion')
+    ) {
+      return columns;
+    }
+  }
+
+  return [];
+}
+
+function getFixedValue(line, column, nextColumn) {
+  if (getDisplayWidth(line) <= column.start) {
+    return '';
+  }
+
+  const start = getStringIndexAtDisplayColumn(line, column.start);
+  const end = nextColumn ? getStringIndexAtDisplayColumn(line, nextColumn.start) : line.length;
+  return line.slice(start, end).trim();
+}
+
+function parseDataLine(line, options = {}) {
+  const allowMissingSource = options.allowMissingSource !== false;
+  const tokens = line.trim().split(/\s+/);
+
+  const isPackageId = (value) => /^[A-Za-z0-9][A-Za-z0-9._+-]{2,}$/.test(value);
+  const isKnownSource = (value) => /^(winget|msstore)$/i.test(value);
+
+  if (tokens.length >= 5 && isKnownSource(tokens[tokens.length - 1])) {
+    const source = tokens[tokens.length - 1];
+    const availableVersion = tokens[tokens.length - 2];
+    const installedVersion = tokens[tokens.length - 3];
+    const id = tokens[tokens.length - 4];
+    const name = tokens.slice(0, -4).join(' ');
+
+    if (name && isPackageId(id)) {
+      return {
+        name,
+        id,
+        installedVersion,
+        availableVersion,
+        source
+      };
+    }
+  }
+
+  if (allowMissingSource && tokens.length >= 4) {
+    const availableVersion = tokens[tokens.length - 1];
+    const installedVersion = tokens[tokens.length - 2];
+    const id = tokens[tokens.length - 3];
+    const name = tokens.slice(0, -3).join(' ');
+
+    if (name && isPackageId(id)) {
+      return {
+        name,
+        id,
+        installedVersion,
+        availableVersion,
+        source: ''
+      };
+    }
+  }
+
+  return null;
+}
+
+function toCount(value) {
+  const normalized = String(value ?? '').replace(/,/g, '');
+  const count = Number.parseInt(normalized, 10);
+  return Number.isFinite(count) ? count : null;
+}
+
+function parseWingetUpgradeMetadata(output) {
+  const lines = sanitizeWingetOutput(output).split(/\r?\n/);
+  let declaredUpgradeCount = null;
+  let unknownVersionCount = 0;
+
+  for (const rawLine of lines) {
+    const line = rawLine.trim();
+
+    if (!line) {
+      continue;
+    }
+
+    if (/사용 가능한 업그레이드가 없습니다|no available upgrades?|no newer package versions/i.test(line)) {
+      declaredUpgradeCount = 0;
+      continue;
+    }
+
+    const koreanUpgrade = line.match(/(\d[\d,]*)\s*(?:개\s*)?업그레이드(?:를|가)?\s*(?:사용\s*가능|사용할 수 있습니다)/);
+    const englishUpgrade = line.match(/(\d[\d,]*)\s+upgrades?\s+available/i);
+    const upgradeMatch = koreanUpgrade || englishUpgrade;
+
+    if (upgradeMatch) {
+      declaredUpgradeCount = toCount(upgradeMatch[1]);
+      continue;
+    }
+
+    const koreanUnknown = line.match(/(\d[\d,]*)\s*(?:개\s*)?패키지(?:에|가|는)?.*확인할 수 없는\s+버전/);
+    const englishUnknown = line.match(/(\d[\d,]*)\s+packages?.*version numbers?.*cannot be determined/i);
+    const unknownMatch = koreanUnknown || englishUnknown;
+
+    if (unknownMatch) {
+      unknownVersionCount = toCount(unknownMatch[1]) ?? unknownVersionCount;
+    }
+  }
+
+  return {
+    declaredUpgradeCount,
+    unknownVersionCount
+  };
+}
+
+function isWingetMessageLine(line) {
+  return (
+    /업그레이드(?:를|가)?\s*(?:사용\s*가능|사용할 수 있습니다)/.test(line) ||
+    /upgrades?\s+available/i.test(line) ||
+    /확인할 수 없는\s+버전/.test(line) ||
+    /version numbers?.*cannot be determined/i.test(line) ||
+    /--include-unknown/i.test(line) ||
+    /사용 가능한 업그레이드가 없습니다|no available upgrades?|no newer package versions/i.test(line)
+  );
+}
+
+function parseWingetUpgradeRows(output) {
+  const lines = sanitizeWingetOutput(output)
+    .split(/\r?\n/)
+    .map((line) => line.trimEnd());
+
+  const headerIndex = lines.findIndex((line) => {
+    const columns = getHeaderStarts(line);
+    return columns.length >= 4;
+  });
+
+  if (headerIndex < 0) {
+    return [];
+  }
+
+  const columns = getHeaderStarts(lines[headerIndex]);
+  const hasSourceColumn = columns.some((column) => column.key === 'source');
+  const dataLines = lines.slice(headerIndex + 1).filter((line) => !/^\s*-{4,}\s*$/.test(line));
+  const rows = [];
+
+  for (const line of dataLines) {
+    if (!line.trim()) {
+      continue;
+    }
+
+    if (isWingetMessageLine(line)) {
+      continue;
+    }
+
+    const parsedLine = parseDataLine(line, { allowMissingSource: !hasSourceColumn });
+    if (parsedLine) {
+      rows.push(parsedLine);
+      continue;
+    }
+
+    const row = {};
+    for (let index = 0; index < columns.length; index += 1) {
+      const column = columns[index];
+      row[column.key] = getFixedValue(line, column, columns[index + 1]);
+    }
+
+    if (!row.id || !row.installedVersion || !row.availableVersion) {
+      continue;
+    }
+
+    rows.push({
+      name: row.name || row.id,
+      id: row.id,
+      installedVersion: row.installedVersion,
+      availableVersion: row.availableVersion,
+      source: row.source || ''
+    });
+  }
+
+  return rows;
+}
+
+function parseWingetUpgradeOutput(output) {
+  return parseWingetUpgradeRows(output);
+}
+
+function parseWingetUpgradeResult(output) {
+  const packages = parseWingetUpgradeRows(output);
+  const metadata = parseWingetUpgradeMetadata(output);
+
+  return {
+    packages,
+    ...metadata,
+    parsedCount: packages.length,
+    countMismatch:
+      metadata.declaredUpgradeCount !== null && metadata.declaredUpgradeCount !== packages.length
+  };
+}
+
+function buildListArgs(options = {}) {
+  const args = ['upgrade', '--accept-source-agreements'];
+
+  if (options.includeUnknown) {
+    args.push('--include-unknown');
+  }
+
+  if (options.includePinned) {
+    args.push('--include-pinned');
+  }
+
+  return args;
+}
+
+function buildUpgradeArgs(id, options = {}) {
+  if (!id || typeof id !== 'string') {
+    throw new Error('A package id is required.');
+  }
+
+  const args = [
+    'upgrade',
+    '--id',
+    id,
+    '--exact',
+    '--accept-package-agreements',
+    '--accept-source-agreements',
+    '--disable-interactivity'
+  ];
+
+  if (options.silent) {
+    args.push('--silent');
+  }
+
+  if (options.includeUnknown) {
+    args.push('--include-unknown');
+  }
+
+  if (options.includePinned) {
+    args.push('--include-pinned');
+  }
+
+  if (options.allowReboot) {
+    args.push('--allow-reboot');
+  }
+
+  return args;
+}
+
+function createWingetRunner() {
+  const events = new EventEmitter();
+  let currentProcess = null;
+  let cancelled = false;
+
+  function runWinget(args) {
+    return new Promise((resolve) => {
+      const child = spawn('winget', args, {
+        windowsHide: true,
+        shell: false
+      });
+
+      currentProcess = child;
+      let stdout = '';
+      let stderr = '';
+
+      child.stdout.on('data', (chunk) => {
+        const text = sanitizeWingetOutput(chunk.toString('utf8'));
+        stdout += `${text}\n`;
+        events.emit('log', text);
+      });
+
+      child.stderr.on('data', (chunk) => {
+        const text = sanitizeWingetOutput(chunk.toString('utf8'));
+        stderr += `${text}\n`;
+        events.emit('log', text);
+      });
+
+      child.on('error', (error) => {
+        currentProcess = null;
+        events.emit('log', error.message);
+        resolve({
+          ok: false,
+          code: -1,
+          stdout,
+          stderr: `${stderr}${error.message}`
+        });
+      });
+
+      child.on('close', (code) => {
+        currentProcess = null;
+        resolve({
+          ok: code === 0,
+          code,
+          stdout,
+          stderr
+        });
+      });
+    });
+  }
+
+  async function listUpgrades(options = {}) {
+    cancelled = false;
+    events.emit('log', 'winget upgrade 목록을 불러오는 중...');
+    const result = await runWinget(buildListArgs(options));
+    const parsed = parseWingetUpgradeResult(result.stdout);
+    return {
+      ...result,
+      ...parsed
+    };
+  }
+
+  async function upgradeSelected(packages, options = {}) {
+    cancelled = false;
+    const results = [];
+
+    for (const item of packages) {
+      if (cancelled) {
+        results.push({
+          id: item.id,
+          name: item.name,
+          ok: false,
+          code: null,
+          skipped: true
+        });
+        continue;
+      }
+
+      const args = buildUpgradeArgs(item.id, options);
+      events.emit('package-start', item);
+      events.emit('log', `업데이트 시작: ${item.name || item.id}`);
+      const result = await runWinget(args);
+      const itemResult = {
+        id: item.id,
+        name: item.name,
+        ok: result.ok,
+        code: result.code,
+        stdout: result.stdout,
+        stderr: result.stderr
+      };
+      results.push(itemResult);
+      events.emit('package-complete', itemResult);
+    }
+
+    events.emit('queue-complete', results);
+    return results;
+  }
+
+  function cancel() {
+    cancelled = true;
+    if (currentProcess) {
+      currentProcess.kill();
+    }
+  }
+
+  return {
+    events,
+    listUpgrades,
+    upgradeSelected,
+    cancel
+  };
+}
+
+module.exports = {
+  buildListArgs,
+  buildUpgradeArgs,
+  createWingetRunner,
+  parseWingetUpgradeOutput,
+  parseWingetUpgradeResult,
+  sanitizeWingetOutput
+};
