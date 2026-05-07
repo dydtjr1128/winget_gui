@@ -23,3 +23,7 @@ contextBridge.exposeInMainWorld('windowApi', {
   isMaximized: () => ipcRenderer.invoke('window:is-maximized'),
   onMaximizedChange: (callback) => subscribe('window:maximized', callback)
 });
+
+contextBridge.exposeInMainWorld('localeApi', {
+  getSystemLocale: () => ipcRenderer.invoke('app:get-locale')
+});

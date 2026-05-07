@@ -44,7 +44,8 @@ body,
 }
 
 button,
-input {
+input,
+select {
   font: inherit;
 }
 
@@ -273,6 +274,31 @@ button {
   font-size: 14px;
   font-weight: 600;
   letter-spacing: -0.224px;
+}
+
+.language-control {
+  display: grid;
+  gap: 6px;
+  color: var(--body-muted-dark);
+  font-size: 13px;
+  font-weight: 400;
+  line-height: 1.25;
+}
+
+.language-control select {
+  width: 100%;
+  min-height: 34px;
+  padding: 0 10px;
+  color: #ffffff;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: var(--radius-sm);
+  background: #1f1f21;
+  outline: none;
+}
+
+.language-control select:focus {
+  border-color: var(--primary-on-dark);
+  box-shadow: 0 0 0 3px rgba(41, 151, 255, 0.18);
 }
 
 .check-option {
@@ -685,6 +711,10 @@ td {
   white-space: nowrap;
 }
 
+td.status-column {
+  overflow: visible;
+}
+
 tbody tr {
   cursor: pointer;
 }
@@ -795,10 +825,60 @@ td:nth-child(7) {
 }
 
 .status-cell {
+  position: relative;
   gap: 6px;
   color: var(--body-muted);
   font-size: 14px;
   font-weight: 400;
+}
+
+.status-cell.has-detail {
+  width: fit-content;
+  max-width: 100%;
+  cursor: help;
+  outline: none;
+}
+
+.status-cell.has-detail span {
+  text-decoration: underline dotted rgba(0, 102, 204, 0.42);
+  text-underline-offset: 3px;
+}
+
+.status-cell.has-detail::after {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 30;
+  width: min(340px, 42vw);
+  padding: 9px 10px;
+  color: #ffffff;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: var(--radius-sm);
+  background: #111113;
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.3);
+  content: attr(data-detail);
+  font-size: 12px;
+  font-weight: 400;
+  letter-spacing: 0;
+  line-height: 1.35;
+  opacity: 0;
+  pointer-events: none;
+  text-align: left;
+  transform: translateY(-3px);
+  transition:
+    opacity 0.12s ease,
+    transform 0.12s ease,
+    visibility 0.12s ease;
+  visibility: hidden;
+  white-space: pre-wrap;
+}
+
+.status-cell.has-detail:hover::after,
+.status-cell.has-detail:focus::after {
+  opacity: 1;
+  transform: translateY(0);
+  transition-delay: 0.35s;
+  visibility: visible;
 }
 
 .status-icon {

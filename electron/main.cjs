@@ -116,6 +116,8 @@ ipcMain.handle('window:is-maximized', (event) => {
   return Boolean(BrowserWindow.fromWebContents(event.sender)?.isMaximized());
 });
 
+ipcMain.handle('app:get-locale', () => app.getLocale());
+
 app.whenReady().then(() => {
   createWindow();
 

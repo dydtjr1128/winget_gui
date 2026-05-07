@@ -360,6 +360,80 @@ function parseWingetUpgradeResult(output) {
   };
 }
 
+function isFailureDetailNoise(line) {
+  return (
+    /^[-\\/|]$/.test(line) ||
+    /^찾음 .+\[.+\]\s+버전\s+/i.test(line) ||
+    /^Found .+\[.+\]\s+Version\s+/i.test(line) ||
+    /라이선스는 그 소유자가 사용자에게 부여했습니다/.test(line) ||
+    /Microsoft는 타사 패키지에 대한 책임을 지지/.test(line) ||
+    /The license for this application/i.test(line) ||
+    /Microsoft is not responsible for/i.test(line) ||
+    /설치 관리자 해시를 확인했습니다/.test(line) ||
+    /Installer hash verified/i.test(line) ||
+    /패키지 제거를 시작하는 중/.test(line) ||
+    /Starting package uninstall/i.test(line) ||
+    /^다운로드\s+/.test(line) ||
+    /^Downloading\s+/i.test(line)
+  );
+}
+
+function isHighSignalFailureLine(line) {
+  return (
+    /설치 종료 코드로 인해/.test(line) ||
+    /MsiExec .*failed:\s*-?\d+/i.test(line) ||
+    /적용 가능한 업그레이드를 찾을 수 없습니다/.test(line) ||
+    /시스템 또는 요구 사항에는 적용되지 않습니다/.test(line) ||
+    /No applicable upgrade found/i.test(line) ||
+    /not applicable to your system or requirements/i.test(line) ||
+    /failed|failure|error/i.test(line) ||
+    /실패|오류/.test(line)
+  );
+}
+
+function uniqueLines(lines) {
+  const seen = new Set();
+  return lines.filter((line) => {
+    if (seen.has(line)) {
+      return false;
+    }
+
+    seen.add(line);
+    return true;
+  });
+}
+
+function summarizeWingetFailure(result, options = {}) {
+  if (result?.ok) {
+    return '';
+  }
+
+  const maxLines = Number.isInteger(options.maxLines) ? options.maxLines : 3;
+  const output = [result?.stdout, result?.stderr].filter(Boolean).join('\n');
+  const lines = uniqueLines(
+    sanitizeWingetOutput(output)
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean)
+  );
+  const signalLines = lines.filter((line) => isHighSignalFailureLine(line));
+  const detailLines =
+    signalLines.length > 0
+      ? signalLines.slice(-maxLines)
+      : lines.filter((line) => !isFailureDetailNoise(line)).slice(-maxLines);
+  const detail = detailLines.join('\n').trim();
+
+  if (detail) {
+    return detail;
+  }
+
+  if (result?.code !== undefined && result?.code !== null) {
+    return `winget exited with code ${result.code}`;
+  }
+
+  return 'winget failed without a detailed error message.';
+}
+
 function buildListArgs(options = {}) {
   const args = ['upgrade', '--accept-source-agreements'];
 
@@ -498,6 +572,7 @@ function createWingetRunner() {
         name: item.name,
         ok: result.ok,
         code: result.code,
+        failureDetail: summarizeWingetFailure(result),
         stdout: result.stdout,
         stderr: result.stderr
       };
@@ -531,5 +606,6 @@ module.exports = {
   createWingetRunner,
   parseWingetUpgradeOutput,
   parseWingetUpgradeResult,
-  sanitizeWingetOutput
+  sanitizeWingetOutput,
+  summarizeWingetFailure
 };

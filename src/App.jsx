@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AppWindow,
   CheckCircle2,
@@ -16,6 +16,13 @@ import {
   X
 } from 'lucide-react';
 import logoUrl from './assets/winget-gui-logo.png';
+import {
+  createTranslator,
+  defaultLanguagePreference,
+  formatTimeLabel,
+  languagePreferences,
+  resolveLocalePreference
+} from './i18n.mjs';
 
 const api = window.wingetApi ?? null;
 const windowApi = window.windowApi ?? {
@@ -33,17 +40,50 @@ const emptyListMeta = {
   countMismatch: false
 };
 const maxLogLines = 400;
+const languagePreferenceStorageKey = 'winget-gui-language-preference';
 
-function nowLabel() {
-  return new Intl.DateTimeFormat('ko-KR', {
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit'
-  }).format(new Date());
+function browserLanguageSource() {
+  if (typeof navigator === 'undefined') {
+    return [];
+  }
+
+  return [
+    ...(Array.isArray(navigator.languages) ? navigator.languages : []),
+    navigator.language
+  ].filter(Boolean);
 }
 
-function formatLogLine(line) {
-  return `[${nowLabel()}] ${line}`;
+function readStoredLanguagePreference() {
+  if (typeof localStorage === 'undefined') {
+    return defaultLanguagePreference;
+  }
+
+  try {
+    const stored = localStorage.getItem(languagePreferenceStorageKey);
+    return languagePreferences.includes(stored) ? stored : defaultLanguagePreference;
+  } catch {
+    return defaultLanguagePreference;
+  }
+}
+
+function writeStoredLanguagePreference(preference) {
+  if (typeof localStorage === 'undefined') {
+    return;
+  }
+
+  try {
+    localStorage.setItem(languagePreferenceStorageKey, preference);
+  } catch {
+    // Keep the selected language for this session even when persistence is unavailable.
+  }
+}
+
+function nowLabel(locale) {
+  return formatTimeLabel(new Date(), locale);
+}
+
+function formatLogLine(line, locale) {
+  return `[${nowLabel(locale)}] ${line}`;
 }
 
 function matchesPackage(item, query) {
@@ -62,34 +102,50 @@ function packageInitial(name) {
   return String(name || '?').trim().slice(0, 1).toUpperCase();
 }
 
-function statusLabel(status) {
-  if (status === 'running') return '진행 중';
-  if (status === 'success') return '완료';
-  if (status === 'failed') return '실패';
-  return '대기';
+function statusLabel(status, t) {
+  if (status === 'running') return t('status.running');
+  if (status === 'success') return t('status.success');
+  if (status === 'failed') return t('status.failed');
+  return t('status.idle');
 }
 
-const optionTooltips = {
-  silent: '설치 프로그램이 지원하면 확인 창 없이 조용히 설치합니다.',
-  includeUnknown: '현재 버전을 알 수 없는 패키지도 목록과 업데이트 대상에 포함합니다.',
-  includePinned: 'winget에서 고정된 항목도 차단되지 않는 경우 목록에 포함합니다.',
-  allowReboot: '패키지가 요구하면 업데이트 중 재부팅을 허용합니다.'
-};
+function failureDetailFor(item) {
+  return item.status === 'failed' ? String(item.failureDetail ?? '').trim() : '';
+}
 
-function StatusIcon({ status }) {
+function StatusIcon({ status, t }) {
   if (status === 'running') {
-    return <Loader2 className="status-icon spin" aria-label="진행 중" />;
+    return <Loader2 className="status-icon spin" aria-label={t('status.running')} />;
   }
   if (status === 'success') {
-    return <CheckCircle2 className="status-icon success" aria-label="완료" />;
+    return <CheckCircle2 className="status-icon success" aria-label={t('status.success')} />;
   }
   if (status === 'failed') {
-    return <CircleAlert className="status-icon failed" aria-label="실패" />;
+    return <CircleAlert className="status-icon failed" aria-label={t('status.failed')} />;
   }
-  return <span className="status-dot idle" aria-label="대기" />;
+  return <span className="status-dot idle" aria-label={t('status.idle')} />;
 }
 
-function SelectAllCheckbox({ checked, indeterminate, disabled, onChange }) {
+function StatusCell({ item, t }) {
+  const label = statusLabel(item.status, t);
+  const detail = failureDetailFor(item);
+  const title = detail ? `${t('status.failureDetail')}\n${detail}` : label;
+
+  return (
+    <div
+      className={detail ? 'status-cell has-detail' : 'status-cell'}
+      title={title}
+      data-detail={detail || undefined}
+      tabIndex={detail ? 0 : undefined}
+      aria-label={detail ? `${label}: ${detail}` : label}
+    >
+      <StatusIcon status={item.status} t={t} />
+      <span>{label}</span>
+    </div>
+  );
+}
+
+function SelectAllCheckbox({ checked, indeterminate, disabled, onChange, t }) {
   const inputRef = useRef(null);
 
   useEffect(() => {
@@ -106,14 +162,14 @@ function SelectAllCheckbox({ checked, indeterminate, disabled, onChange }) {
         checked={checked}
         onChange={onChange}
         disabled={disabled}
-        aria-label="표시된 항목 모두 선택"
+        aria-label={t('aria.selectAllVisible')}
       />
-      <span>선택</span>
+      <span>{t('table.select')}</span>
     </label>
   );
 }
 
-function WindowControls() {
+function WindowControls({ t }) {
   const [maximized, setMaximized] = useState(false);
 
   useEffect(() => {
@@ -122,18 +178,18 @@ function WindowControls() {
   }, []);
 
   return (
-    <div className="window-controls" aria-label="창 제어">
-      <button className="window-button" onClick={() => windowApi.minimize()} aria-label="최소화">
+    <div className="window-controls" aria-label={t('aria.windowControls')}>
+      <button className="window-button" onClick={() => windowApi.minimize()} aria-label={t('aria.minimize')}>
         <Minus size={15} />
       </button>
       <button
         className="window-button"
         onClick={async () => setMaximized(await windowApi.toggleMaximize())}
-        aria-label={maximized ? '이전 크기로' : '최대화'}
+        aria-label={maximized ? t('aria.restore') : t('aria.maximize')}
       >
         {maximized ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
       </button>
-      <button className="window-button close" onClick={() => windowApi.close()} aria-label="닫기">
+      <button className="window-button close" onClick={() => windowApi.close()} aria-label={t('aria.close')}>
         <X size={16} />
       </button>
     </div>
@@ -171,7 +227,7 @@ function ProgressBanner({ active, label, progress }) {
   );
 }
 
-function NativeOnlyScreen() {
+function NativeOnlyScreen({ t }) {
   return (
     <div className="desktop-app">
       <header className="titlebar">
@@ -181,15 +237,15 @@ function NativeOnlyScreen() {
             <span>Winget GUI</span>
           </div>
         </div>
-        <WindowControls />
+        <WindowControls t={t} />
       </header>
       <main className="native-only">
         <div className="native-only-panel">
           <div className="native-only-icon">
             <AppWindow size={34} />
           </div>
-          <h1>PC용 앱으로 실행하세요</h1>
-          <p>브라우저 화면에서는 winget에 접근하지 않습니다.</p>
+          <h1>{t('native.title')}</h1>
+          <p>{t('native.body')}</p>
           <code>npm start</code>
         </div>
       </main>
@@ -198,6 +254,16 @@ function NativeOnlyScreen() {
 }
 
 export default function App() {
+  const [languagePreference, setLanguagePreference] = useState(readStoredLanguagePreference);
+  const [systemLanguages, setSystemLanguages] = useState(browserLanguageSource);
+  const resolvedLocale = useMemo(
+    () => resolveLocalePreference(languagePreference, systemLanguages),
+    [languagePreference, systemLanguages]
+  );
+  const translator = useMemo(() => createTranslator(resolvedLocale), [resolvedLocale]);
+  const { locale: activeLocale, t } = translator;
+  const localeRef = useRef(activeLocale);
+  const tRef = useRef(t);
   const [packages, setPackages] = useState([]);
   const [query, setQuery] = useState('');
   const [loading, setLoading] = useState(false);
@@ -214,7 +280,44 @@ export default function App() {
     allowReboot: false
   });
 
-  const addLog = (entry) => {
+  useEffect(() => {
+    localeRef.current = activeLocale;
+    tRef.current = t;
+    if (typeof document !== 'undefined') {
+      document.documentElement.lang = activeLocale;
+      document.title = t('app.title');
+    }
+  }, [activeLocale, t]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    window.localeApi?.getSystemLocale?.()
+      .then((systemLocale) => {
+        if (cancelled) {
+          return;
+        }
+
+        setSystemLanguages([systemLocale, ...browserLanguageSource()].filter(Boolean));
+      })
+      .catch(() => {});
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const optionTooltips = useMemo(
+    () => ({
+      silent: t('tooltips.silent'),
+      includeUnknown: t('tooltips.includeUnknown'),
+      includePinned: t('tooltips.includePinned'),
+      allowReboot: t('tooltips.allowReboot')
+    }),
+    [t]
+  );
+
+  const addLog = useCallback((entry) => {
     const isTerminalEntry = entry && typeof entry === 'object';
     const text = isTerminalEntry ? entry.text : entry;
     const replace = Boolean(isTerminalEntry && entry.replace);
@@ -223,7 +326,7 @@ export default function App() {
       return;
     }
     setLogs((current) => {
-      const nextLine = formatLogLine(cleaned);
+      const nextLine = formatLogLine(cleaned, localeRef.current);
 
       if (replace && current.length > 0) {
         return [...current.slice(0, -1), nextLine];
@@ -231,7 +334,7 @@ export default function App() {
 
       return [...current.slice(-(maxLogLines - 1)), nextLine];
     });
-  };
+  }, []);
 
   const visiblePackages = useMemo(
     () => packages.filter((item) => matchesPackage(item, query)),
@@ -256,11 +359,11 @@ export default function App() {
     activeQueueTotal > 0 ? Math.round((activeQueueCompleted / activeQueueTotal) * 100) : null;
   const busy = loading || running;
   const progressActive = loading || running;
-  const progressLabel = running ? '선택한 패키지를 순차 업데이트하는 중' : 'winget 목록을 동기화하는 중';
+  const progressLabel = running ? t('progress.updating') : t('progress.syncing');
   const countAlert = listMeta.countMismatch
-    ? `winget은 ${wingetCount}개라고 보고했지만 표에는 ${packages.length}개가 표시됐습니다.`
+    ? t('alerts.countMismatch', { wingetCount, displayedCount: packages.length })
     : unknownVersionCount > 0 && !options.includeUnknown
-      ? `버전 미확인 ${unknownVersionCount}개는 숨겨질 수 있습니다.`
+      ? t('alerts.unknownHidden', { count: unknownVersionCount })
       : '';
 
   useEffect(() => {
@@ -272,14 +375,21 @@ export default function App() {
       api.onLog(addLog),
       api.onPackageStart((item) => {
         setPackages((current) =>
-          current.map((pkg) => (pkg.id === item.id ? { ...pkg, status: 'running' } : pkg))
+          current.map((pkg) =>
+            pkg.id === item.id ? { ...pkg, status: 'running', failureDetail: '' } : pkg
+          )
         );
       }),
       api.onPackageComplete((result) => {
         setPackages((current) =>
           current.map((pkg) =>
             pkg.id === result.id
-              ? { ...pkg, selected: false, status: result.ok ? 'success' : 'failed' }
+              ? {
+                  ...pkg,
+                  selected: false,
+                  status: result.ok ? 'success' : 'failed',
+                  failureDetail: result.ok ? '' : String(result.failureDetail ?? '').trim()
+                }
               : pkg
           )
         );
@@ -310,7 +420,7 @@ export default function App() {
     }
 
     setLoading(true);
-    addLog('winget upgrade 목록 조회');
+    addLog(tRef.current('logs.fetchList'));
     try {
       const result = await api.listUpgrades({
         includeUnknown: options.includeUnknown,
@@ -321,7 +431,8 @@ export default function App() {
         nextPackages.map((item) => ({
           ...item,
           selected: false,
-          status: 'idle'
+          status: 'idle',
+          failureDetail: ''
         }))
       );
       setActiveQueueTotal(0);
@@ -334,20 +445,23 @@ export default function App() {
         parsedCount: typeof result.parsedCount === 'number' ? result.parsedCount : nextPackages.length,
         countMismatch: Boolean(result.countMismatch)
       });
-      setLastLoadedAt(nowLabel());
+      setLastLoadedAt(nowLabel(localeRef.current));
       if (!result.ok) {
-        addLog(`목록 조회 종료 코드: ${result.code}`);
+        addLog(tRef.current('logs.listExitCode', { code: result.code }));
       }
       if (nextPackages.length === 0) {
-        addLog('업데이트 가능한 항목이 없습니다.');
+        addLog(tRef.current('logs.noUpdates'));
       }
       if (result.countMismatch) {
         addLog(
-          `개수 확인 필요: winget ${result.declaredUpgradeCount}개, 표 표시 ${nextPackages.length}개`
+          tRef.current('logs.countMismatch', {
+            wingetCount: result.declaredUpgradeCount,
+            displayedCount: nextPackages.length
+          })
         );
       }
       if (result.unknownVersionCount > 0 && !options.includeUnknown) {
-        addLog(`버전 미확인 ${result.unknownVersionCount}개: 옵션을 켜고 새로고침하면 포함됩니다.`);
+        addLog(tRef.current('logs.unknownVersions', { count: result.unknownVersionCount }));
       }
     } catch (error) {
       addLog(error.message);
@@ -378,6 +492,15 @@ export default function App() {
     );
   }
 
+  function updateLanguagePreference(nextPreference) {
+    if (!languagePreferences.includes(nextPreference)) {
+      return;
+    }
+
+    setLanguagePreference(nextPreference);
+    writeStoredLanguagePreference(nextPreference);
+  }
+
   function updateOption(key) {
     if (busy) {
       return;
@@ -385,7 +508,7 @@ export default function App() {
 
     setOptions((current) => ({ ...current, [key]: !current[key] }));
     if (key === 'includeUnknown' || key === 'includePinned') {
-      addLog('목록 표시 옵션이 바뀌었습니다. 다시 조회합니다.');
+      addLog(tRef.current('logs.optionsChanged'));
     }
   }
 
@@ -398,16 +521,18 @@ export default function App() {
     setActiveQueueTotal(selectedPackages.length);
     setActiveQueueIds(selectedPackages.map((item) => item.id));
     setPackages((current) =>
-      current.map((item) => (item.selected ? { ...item, status: 'idle' } : item))
+      current.map((item) =>
+        item.selected ? { ...item, status: 'idle', failureDetail: '' } : item
+      )
     );
-    addLog(`선택 업데이트 시작: ${selectedPackages.length}개`);
+    addLog(tRef.current('logs.updateStart', { count: selectedPackages.length }));
 
     try {
       await api.upgradeSelected(
         selectedPackages.map((item) => item.id),
         options
       );
-      addLog('선택 업데이트 완료');
+      addLog(tRef.current('logs.updateComplete'));
       setRunning(false);
       setActiveQueueTotal(0);
       setActiveQueueIds([]);
@@ -421,14 +546,14 @@ export default function App() {
 
   async function cancelUpdates() {
     await api.cancelUpgrade();
-    addLog('진행 중인 업데이트 취소 요청');
+    addLog(tRef.current('logs.cancelRequested'));
     setRunning(false);
     setActiveQueueTotal(0);
     setActiveQueueIds([]);
   }
 
   if (!hasNativeApi) {
-    return <NativeOnlyScreen />;
+    return <NativeOnlyScreen t={t} />;
   }
 
   return (
@@ -440,55 +565,68 @@ export default function App() {
             <span>Winget GUI</span>
           </div>
         </div>
-        <WindowControls />
+        <WindowControls t={t} />
       </header>
 
       <div className="app-shell">
         <aside className="sidebar">
           <div className="sidebar-header">
             <BrandLogo />
-            <span className="sidebar-kicker">winget upgrade</span>
-            <h1>업데이트</h1>
+            <span className="sidebar-kicker">{t('sidebar.kicker')}</span>
+            <h1>{t('sidebar.title')}</h1>
           </div>
 
-          <section className="summary-panel" aria-label="업데이트 요약">
+          <section className="summary-panel" aria-label={t('aria.updateSummary')}>
             <div className="summary-row primary">
-              <span>winget 기준</span>
+              <span>{t('summary.wingetCount')}</span>
               <strong>{wingetCount}</strong>
             </div>
             <div className="summary-row">
-              <span>표시됨</span>
+              <span>{t('summary.displayed')}</span>
               <strong>{packages.length}</strong>
             </div>
             <div className="summary-row">
-              <span>선택됨</span>
+              <span>{t('summary.selected')}</span>
               <strong>{selectedPackages.length}</strong>
             </div>
             <div className="summary-row">
-              <span>대기</span>
+              <span>{t('summary.pending')}</span>
               <strong>{pendingCount}</strong>
             </div>
             <div className="summary-row">
-              <span>완료</span>
+              <span>{t('summary.completed')}</span>
               <strong>{finishedCount}</strong>
             </div>
             <div className="summary-row">
-              <span>실패</span>
+              <span>{t('summary.failed')}</span>
               <strong>{failedCount}</strong>
             </div>
             {unknownVersionCount > 0 ? (
               <div className="summary-row subtle">
-                <span>버전 미확인</span>
+                <span>{t('summary.unknownVersion')}</span>
                 <strong>{unknownVersionCount}</strong>
               </div>
             ) : null}
           </section>
 
-          <section className="option-panel" id="options" aria-label="업데이트 옵션">
+          <section className="option-panel" id="options" aria-label={t('aria.updateOptions')}>
             <div className="panel-title">
               <Settings2 size={16} />
-              <span>업데이트 옵션</span>
+              <span>{t('options.title')}</span>
             </div>
+            <label className="language-control">
+              <span>{t('language.title')}</span>
+              <select
+                value={languagePreference}
+                onChange={(event) => updateLanguagePreference(event.target.value)}
+              >
+                {languagePreferences.map((preference) => (
+                  <option key={preference} value={preference}>
+                    {t(`language.${preference}`)}
+                  </option>
+                ))}
+              </select>
+            </label>
             <label className="check-option" data-tooltip={optionTooltips.silent}>
               <input
                 type="checkbox"
@@ -496,7 +634,7 @@ export default function App() {
                 onChange={() => updateOption('silent')}
                 disabled={busy}
               />
-              <span>무인 설치 <em>(--silent)</em></span>
+              <span>{t('options.silent')} <em>(--silent)</em></span>
             </label>
             <label className="check-option" data-tooltip={optionTooltips.includeUnknown}>
               <input
@@ -505,7 +643,7 @@ export default function App() {
                 onChange={() => updateOption('includeUnknown')}
                 disabled={busy}
               />
-              <span>버전 미확인 포함 <em>(--include-unknown)</em></span>
+              <span>{t('options.includeUnknown')} <em>(--include-unknown)</em></span>
             </label>
             <label className="check-option" data-tooltip={optionTooltips.includePinned}>
               <input
@@ -514,7 +652,7 @@ export default function App() {
                 onChange={() => updateOption('includePinned')}
                 disabled={busy}
               />
-              <span>고정 항목 포함 <em>(--include-pinned)</em></span>
+              <span>{t('options.includePinned')} <em>(--include-pinned)</em></span>
             </label>
             <label className="check-option" data-tooltip={optionTooltips.allowReboot}>
               <input
@@ -523,12 +661,12 @@ export default function App() {
                 onChange={() => updateOption('allowReboot')}
                 disabled={busy}
               />
-              <span>재부팅 허용 <em>(--allow-reboot)</em></span>
+              <span>{t('options.allowReboot')} <em>(--allow-reboot)</em></span>
             </label>
           </section>
 
           <div className="sidebar-footer">
-            <span>마지막 조회</span>
+            <span>{t('summary.lastLoaded')}</span>
             <strong>{lastLoadedAt || '-'}</strong>
           </div>
         </aside>
@@ -537,7 +675,7 @@ export default function App() {
           <section className="workspace-header" id="updates">
             <div>
               <div className="heading-row">
-                <h2>패키지 업데이트</h2>
+                <h2>{t('workspace.title')}</h2>
                 {countAlert && !progressActive ? (
                   <div className="count-alert" role="status">
                     <CircleAlert size={15} />
@@ -546,19 +684,19 @@ export default function App() {
                 ) : null}
               </div>
               <p>
-                winget 기준 {wingetCount}개 중 {packages.length}개 표시
+                {t('workspace.subtitle', { wingetCount, displayedCount: packages.length })}
               </p>
             </div>
             <div className="header-actions">
               {running ? (
                 <button className="button danger" onClick={cancelUpdates}>
                   <X size={17} />
-                  취소
+                  {t('actions.cancel')}
                 </button>
               ) : null}
               <button className="button secondary" onClick={refreshList} disabled={busy}>
                 <RefreshCw size={17} className={loading ? 'spin' : ''} />
-                새로고침
+                {t('actions.refresh')}
               </button>
               <button
                 className="button primary"
@@ -566,7 +704,7 @@ export default function App() {
                 disabled={selectedPackages.length === 0 || busy}
               >
                 <Download size={17} />
-                선택 업데이트
+                {t('actions.updateSelected')}
               </button>
             </div>
           </section>
@@ -579,25 +717,28 @@ export default function App() {
             />
           </div>
 
-          <section className="command-strip" aria-label="목록 도구">
+          <section className="command-strip" aria-label={t('aria.listTools')}>
             <div className="search-field">
               <Search size={16} />
               <input
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
-                placeholder="검색"
+                placeholder={t('command.searchPlaceholder')}
                 disabled={busy}
               />
             </div>
             <div className="list-count">
               <LayoutList size={17} />
               <span>
-                {visiblePackages.length}/{packages.length} 표시
+                {t('command.visibleCount', {
+                  visibleCount: visiblePackages.length,
+                  totalCount: packages.length
+                })}
               </span>
             </div>
           </section>
 
-          <section className="table-region" aria-label="winget 업데이트 목록">
+          <section className="table-region" aria-label={t('aria.updateList')}>
             <table>
               <thead>
                 <tr>
@@ -607,14 +748,15 @@ export default function App() {
                       indeterminate={someVisibleSelected && !allVisibleSelected}
                       disabled={visiblePackages.length === 0 || busy}
                       onChange={toggleVisibleSelection}
+                      t={t}
                     />
                   </th>
-                  <th>앱</th>
-                  <th>패키지 ID</th>
-                  <th>현재</th>
-                  <th>업데이트</th>
-                  <th>원본</th>
-                  <th>상태</th>
+                  <th>{t('table.app')}</th>
+                  <th>{t('table.packageId')}</th>
+                  <th>{t('table.current')}</th>
+                  <th>{t('table.update')}</th>
+                  <th>{t('table.source')}</th>
+                  <th>{t('table.status')}</th>
                 </tr>
               </thead>
               <tbody>
@@ -631,7 +773,7 @@ export default function App() {
                         onChange={() => toggleSelected(item.id)}
                         onClick={(event) => event.stopPropagation()}
                         disabled={busy}
-                        aria-label={`${item.name} 선택`}
+                        aria-label={t('aria.selectPackage', { name: item.name })}
                       />
                     </td>
                     <td>
@@ -644,11 +786,8 @@ export default function App() {
                     <td className="mono muted">{item.installedVersion}</td>
                     <td className="mono available">{item.availableVersion}</td>
                     <td className="muted">{item.source || '-'}</td>
-                    <td>
-                      <div className="status-cell">
-                        <StatusIcon status={item.status} />
-                        <span>{statusLabel(item.status)}</span>
-                      </div>
+                    <td className="status-column">
+                      <StatusCell item={item} t={t} />
                     </td>
                   </tr>
                 ))}
@@ -658,23 +797,23 @@ export default function App() {
             {visiblePackages.length === 0 ? (
               <div className="empty-state">
                 <CheckCircle2 size={30} />
-                <strong>표시할 항목이 없습니다</strong>
-                <span>{loading ? '목록을 불러오는 중입니다.' : '검색 조건을 바꾸거나 새로고침하세요.'}</span>
+                <strong>{t('empty.title')}</strong>
+                <span>{loading ? t('empty.loading') : t('empty.suggestion')}</span>
               </div>
             ) : null}
           </section>
 
-          <section className="log-panel" id="logs" aria-label="로그">
+          <section className="log-panel" id="logs" aria-label={t('aria.logs')}>
             <div className="log-header">
               <div>
                 <Terminal size={16} />
-                <span>로그</span>
+                <span>{t('log.title')}</span>
               </div>
               <button className="text-button" onClick={() => setLogs([])}>
-                지우기
+                {t('actions.clear')}
               </button>
             </div>
-            <pre>{logs.length > 0 ? logs.join('\n') : '아직 로그가 없습니다.'}</pre>
+            <pre>{logs.length > 0 ? logs.join('\n') : t('logs.empty')}</pre>
           </section>
         </main>
       </div>

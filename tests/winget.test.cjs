@@ -7,7 +7,8 @@ const {
   createTerminalLogProcessor,
   parseWingetUpgradeOutput,
   parseWingetUpgradeResult,
-  sanitizeWingetOutput
+  sanitizeWingetOutput,
+  summarizeWingetFailure
 } = require('../electron/winget.cjs');
 
 test('parses English winget upgrade table rows', () => {
@@ -231,4 +232,38 @@ test('builds list arguments with visibility options', () => {
     '--include-unknown',
     '--include-pinned'
   ]);
+});
+
+test('summarizes a winget MSI uninstall failure for hover details', () => {
+  const detail = summarizeWingetFailure({
+    ok: false,
+    code: 1,
+    stdout: `
+찾음 Microsoft Build of OpenJDK with Hotspot 17 [Microsoft.OpenJDK.17] 버전 17.0.19.10
+이 응용 프로그램의 라이선스는 그 소유자가 사용자에게 부여했습니다.
+설치 관리자 해시를 확인했습니다.
+패키지 제거를 시작하는 중...
+설치 종료 코드로 인해 제거하지 못함: 1603
+`,
+    stderr: ''
+  });
+
+  assert.equal(detail, '설치 종료 코드로 인해 제거하지 못함: 1603');
+});
+
+test('summarizes a winget applicability failure with the explanatory line', () => {
+  const detail = summarizeWingetFailure({
+    ok: false,
+    code: 1,
+    stdout: `
+적용 가능한 업그레이드를 찾을 수 없습니다.
+구성된 원본에서 최신 패키지 버전을 사용할 수 있지만 시스템 또는 요구 사항에는 적용되지 않습니다.
+`,
+    stderr: ''
+  });
+
+  assert.equal(
+    detail,
+    '적용 가능한 업그레이드를 찾을 수 없습니다.\n구성된 원본에서 최신 패키지 버전을 사용할 수 있지만 시스템 또는 요구 사항에는 적용되지 않습니다.'
+  );
 });
