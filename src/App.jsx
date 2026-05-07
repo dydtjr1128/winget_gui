@@ -32,6 +32,7 @@ const emptyListMeta = {
   parsedCount: 0,
   countMismatch: false
 };
+const maxLogLines = 400;
 
 function nowLabel() {
   return new Intl.DateTimeFormat('ko-KR', {
@@ -213,12 +214,23 @@ export default function App() {
     allowReboot: false
   });
 
-  const addLog = (line) => {
-    const cleaned = String(line ?? '').trim();
+  const addLog = (entry) => {
+    const isTerminalEntry = entry && typeof entry === 'object';
+    const text = isTerminalEntry ? entry.text : entry;
+    const replace = Boolean(isTerminalEntry && entry.replace);
+    const cleaned = String(text ?? '').trim();
     if (!cleaned) {
       return;
     }
-    setLogs((current) => [...current.slice(-399), formatLogLine(cleaned)]);
+    setLogs((current) => {
+      const nextLine = formatLogLine(cleaned);
+
+      if (replace && current.length > 0) {
+        return [...current.slice(0, -1), nextLine];
+      }
+
+      return [...current.slice(-(maxLogLines - 1)), nextLine];
+    });
   };
 
   const visiblePackages = useMemo(

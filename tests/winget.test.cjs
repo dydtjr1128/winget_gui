@@ -4,6 +4,7 @@ const test = require('node:test');
 const {
   buildListArgs,
   buildUpgradeArgs,
+  createTerminalLogProcessor,
   parseWingetUpgradeOutput,
   parseWingetUpgradeResult,
   sanitizeWingetOutput
@@ -171,6 +172,36 @@ test('removes progress and terminal control sequences before parsing', () => {
   const dirty = '\u001b[2K\rName Id Version Available Source\u001b[0m';
 
   assert.equal(sanitizeWingetOutput(dirty), 'Name Id Version Available Source');
+});
+
+test('emits carriage-return log frames as terminal line replacements', () => {
+  const entries = [];
+  const processor = createTerminalLogProcessor((entry) => entries.push(entry));
+
+  processor.write('-\r');
+  processor.write('\\\r|\r');
+  processor.write('찾음 Warp [Warp.Warp] 버전 v0\n');
+  processor.flush();
+
+  assert.deepEqual(entries, [
+    { text: '-', replace: false },
+    { text: '\\', replace: true },
+    { text: '|', replace: true },
+    { text: '찾음 Warp [Warp.Warp] 버전 v0', replace: true }
+  ]);
+});
+
+test('emits CRLF log lines as append-only lines', () => {
+  const entries = [];
+  const processor = createTerminalLogProcessor((entry) => entries.push(entry));
+
+  processor.write('첫 번째 줄\r\n두 번째 줄\n');
+  processor.flush();
+
+  assert.deepEqual(entries, [
+    { text: '첫 번째 줄', replace: false },
+    { text: '두 번째 줄', replace: false }
+  ]);
 });
 
 test('builds safe exact-id upgrade arguments', () => {

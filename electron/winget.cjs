@@ -3,15 +3,69 @@ const { EventEmitter } = require('node:events');
 
 const ANSI_PATTERN = /\u001b\[[0-?]*[ -/]*[@-~]/g;
 
-function sanitizeWingetOutput(text) {
+function stripTerminalControlSequences(text) {
   return String(text ?? '')
     .replace(ANSI_PATTERN, '')
+    .replace(/\x08/g, '')
+    .replace(/\u001b/g, '');
+}
+
+function sanitizeWingetOutput(text) {
+  return stripTerminalControlSequences(text)
     .replace(/\r\n/g, '\n')
     .replace(/\r/g, '\n')
-    .replace(/\x08/g, '')
-    .replace(/\u001b/g, '')
     .replace(/^\n+/, '')
     .trimEnd();
+}
+
+function createTerminalLogProcessor(emit) {
+  let line = '';
+  let hasReplaceTarget = false;
+
+  function emitBufferedLine(replace) {
+    const text = line.trim();
+    line = '';
+
+    if (!text) {
+      return false;
+    }
+
+    emit({
+      text,
+      replace: Boolean(replace)
+    });
+    return true;
+  }
+
+  function write(chunk) {
+    const text = stripTerminalControlSequences(chunk).replace(/\r\n/g, '\n');
+
+    for (const char of text) {
+      if (char === '\r') {
+        const emitted = emitBufferedLine(hasReplaceTarget);
+        hasReplaceTarget = emitted || hasReplaceTarget;
+        continue;
+      }
+
+      if (char === '\n') {
+        emitBufferedLine(hasReplaceTarget);
+        hasReplaceTarget = false;
+        continue;
+      }
+
+      line += char;
+    }
+  }
+
+  function flush() {
+    emitBufferedLine(hasReplaceTarget);
+    hasReplaceTarget = false;
+  }
+
+  return {
+    write,
+    flush
+  };
 }
 
 function isCombiningCodePoint(codePoint) {
@@ -369,21 +423,23 @@ function createWingetRunner() {
       currentProcess = child;
       let stdout = '';
       let stderr = '';
+      const logProcessor = createTerminalLogProcessor((entry) => events.emit('log', entry));
 
       child.stdout.on('data', (chunk) => {
-        const text = sanitizeWingetOutput(chunk.toString('utf8'));
-        stdout += `${text}\n`;
-        events.emit('log', text);
+        const text = chunk.toString('utf8');
+        stdout += text;
+        logProcessor.write(text);
       });
 
       child.stderr.on('data', (chunk) => {
-        const text = sanitizeWingetOutput(chunk.toString('utf8'));
-        stderr += `${text}\n`;
-        events.emit('log', text);
+        const text = chunk.toString('utf8');
+        stderr += text;
+        logProcessor.write(text);
       });
 
       child.on('error', (error) => {
         currentProcess = null;
+        logProcessor.flush();
         events.emit('log', error.message);
         resolve({
           ok: false,
@@ -395,6 +451,7 @@ function createWingetRunner() {
 
       child.on('close', (code) => {
         currentProcess = null;
+        logProcessor.flush();
         resolve({
           ok: code === 0,
           code,
@@ -470,6 +527,7 @@ function createWingetRunner() {
 module.exports = {
   buildListArgs,
   buildUpgradeArgs,
+  createTerminalLogProcessor,
   createWingetRunner,
   parseWingetUpgradeOutput,
   parseWingetUpgradeResult,
