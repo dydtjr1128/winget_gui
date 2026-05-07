@@ -2,7 +2,9 @@
 
 Windows `winget upgrade`를 표로 확인하고, 원하는 패키지만 골라 업데이트하는 Electron 데스크톱 앱입니다. 브라우저용 웹사이트가 아니라 PC에서 직접 실행되는 앱이며, 포터블 exe로도 만들 수 있습니다.
 
-![Winget GUI 실행 화면](docs/images/winget-gui-screenshot.png)
+![Winget GUI 패키지 목록 화면](docs/images/winget-gui-package-list.png)
+
+![Winget GUI 업데이트 진행 화면](docs/images/winget-gui-update-progress.png)
 
 ## 주요 기능
 
