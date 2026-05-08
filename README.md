@@ -1,6 +1,6 @@
 # Winget GUI
 
-Windows `winget upgrade`를 표로 확인하고, 원하는 패키지만 골라 업데이트하는 Electron 데스크톱 앱입니다. 브라우저용 웹사이트가 아니라 PC에서 직접 실행되는 앱이며, 포터블 exe로도 만들 수 있습니다.
+Windows `winget`을 GUI 형태로 만들어 원하는 패키지만 골라 업데이트하는 데스크톱 앱입니다.
 
 ![Winget GUI 패키지 목록 화면](docs/images/winget-gui-package-list.png)
 
@@ -53,6 +53,26 @@ release\Winget GUI Portable\Winget GUI.exe
 ```
 
 `release\Winget GUI Portable` 폴더를 통째로 옮기면 설치 없이 exe 더블클릭으로 실행할 수 있습니다.
+
+## GitHub 릴리즈 만들기
+
+GitHub Actions는 `v*` 형식의 태그가 push되면 자동으로 릴리즈를 생성합니다.
+
+```powershell
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+태그 이름은 `package.json`의 `version`과 일치해야 합니다. 예를 들어 `version`이 `0.1.0`이면 태그는 `v0.1.0`이어야 합니다.
+
+릴리즈에는 다음 Windows x64 실행 파일이 첨부됩니다.
+
+```text
+Winget-GUI-Portable-0.1.0-x64.exe
+Winget-GUI-Setup-0.1.0-x64.exe
+```
+
+포터블 exe는 설치 없이 실행하는 단일 파일이고, Setup exe는 설치 경로를 선택할 수 있는 설치 파일입니다. 코드 서명 인증서를 연결하지 않은 상태에서는 Windows SmartScreen 경고가 표시될 수 있습니다.
 
 ## 업데이트 동작
 
