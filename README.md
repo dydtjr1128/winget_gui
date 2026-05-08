@@ -74,6 +74,12 @@ Winget-GUI-Setup-0.1.0-x64.exe
 
 포터블 exe는 설치 없이 실행하는 단일 파일이고, Setup exe는 설치 경로를 선택할 수 있는 설치 파일입니다. 코드 서명 인증서를 연결하지 않은 상태에서는 Windows SmartScreen 경고가 표시될 수 있습니다.
 
+GitHub Actions는 릴리즈 exe에 GitHub Artifact Attestation도 생성합니다. 이 증명은 Windows 코드 서명을 대체하지는 않지만, exe가 이 공개 저장소의 GitHub Actions에서 빌드된 산출물인지 확인하는 데 사용할 수 있습니다.
+
+```powershell
+gh attestation verify .\Winget-GUI-Portable-0.1.0-x64.exe --repo dydtjr1128/winget_gui
+```
+
 ### Windows SmartScreen 안내
 
 릴리즈 exe가 코드 서명되지 않았거나 Microsoft SmartScreen 평판이 아직 충분하지 않으면 `알 수 없는 게시자` 경고가 표시될 수 있습니다. 이 경고는 앱 아이콘이나 패키징 오류가 아니라 Windows 보안 정책에 따른 배포 신뢰도 문제입니다.

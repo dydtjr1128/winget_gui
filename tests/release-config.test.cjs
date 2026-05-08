@@ -33,6 +33,10 @@ test('release workflow runs when a version tag is pushed', () => {
   const workflow = fs.readFileSync(path.join(root, '.github', 'workflows', 'release.yml'), 'utf8');
 
   assert.match(workflow, /tags:\s*\n\s+- 'v\*'/);
+  assert.match(workflow, /contents: write/);
+  assert.match(workflow, /id-token: write/);
+  assert.match(workflow, /attestations: write/);
+  assert.match(workflow, /artifact-metadata: write/);
   assert.match(workflow, /runs-on: windows-2025-vs2026/);
   assert.match(workflow, /actions\/checkout@v6/);
   assert.match(workflow, /actions\/setup-node@v6/);
@@ -46,6 +50,8 @@ test('release workflow runs when a version tag is pushed', () => {
   assert.match(workflow, /npm ci/);
   assert.match(workflow, /npm test/);
   assert.match(workflow, /npm run release:win/);
+  assert.match(workflow, /actions\/attest@v4/);
+  assert.match(workflow, /subject-path: release\/\*\.exe/);
   assert.match(workflow, /softprops\/action-gh-release@v3/);
   assert.match(workflow, /release\/\*\.exe/);
 });

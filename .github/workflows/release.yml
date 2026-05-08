@@ -7,6 +7,9 @@ on:
 
 permissions:
   contents: write
+  id-token: write
+  attestations: write
+  artifact-metadata: write
 
 jobs:
   release:
@@ -53,6 +56,11 @@ jobs:
 
       - name: Build Windows executables
         run: npm run release:win
+
+      - name: Attest release executables
+        uses: actions/attest@v4
+        with:
+          subject-path: release/*.exe
 
       - name: Create GitHub release
         uses: softprops/action-gh-release@v3
