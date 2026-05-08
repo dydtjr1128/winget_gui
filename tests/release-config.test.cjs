@@ -33,6 +33,12 @@ test('release workflow runs when a version tag is pushed', () => {
   assert.match(workflow, /actions\/checkout@v6/);
   assert.match(workflow, /actions\/setup-node@v6/);
   assert.match(workflow, /node-version: 24/);
+  assert.match(workflow, /ELECTRON_CACHE: \$\{\{ github\.workspace \}\}\\\.cache\\electron/);
+  assert.match(workflow, /ELECTRON_BUILDER_CACHE: \$\{\{ github\.workspace \}\}\\\.cache\\electron-builder/);
+  assert.match(workflow, /actions\/cache@v5/);
+  assert.match(workflow, /\.cache\\electron/);
+  assert.match(workflow, /\.cache\\electron-builder/);
+  assert.match(workflow, /key: \$\{\{ runner\.os \}\}-electron-\$\{\{ hashFiles\('package-lock\.json'\) \}\}/);
   assert.match(workflow, /npm ci/);
   assert.match(workflow, /npm test/);
   assert.match(workflow, /npm run release:win/);
