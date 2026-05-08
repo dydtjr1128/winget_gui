@@ -11,7 +11,7 @@
     "build": "vite build",
     "desktop": "npm run build && electron . --dist",
     "package:portable": "npm run build && node scripts/package-portable.cjs",
-    "release:win": "npm run build && electron-builder --win portable nsis --x64",
+    "release:win": "npm run build && electron-builder --win portable nsis --x64 --publish never",
     "portable": "npm run package:portable",
     "preview": "npm run desktop",
     "start": "npm run desktop",
