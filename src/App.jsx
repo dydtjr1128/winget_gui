@@ -12,6 +12,7 @@ import {
   RefreshCw,
   Search,
   Settings2,
+  ShieldAlert,
   Terminal,
   X
 } from 'lucide-react';
@@ -31,6 +32,13 @@ const windowApi = window.windowApi ?? {
   close: async () => {},
   isMaximized: async () => false,
   onMaximizedChange: () => () => {}
+};
+const appApi = window.appApi ?? {
+  isElevated: async () => false,
+  restartElevated: async () => ({
+    ok: false,
+    message: 'Administrator elevation is available only in the desktop app.'
+  })
 };
 const hasNativeApi = Boolean(window.wingetApi);
 const emptyListMeta = {
@@ -324,6 +332,8 @@ export default function App() {
   const [query, setQuery] = useState('');
   const [loading, setLoading] = useState(false);
   const [running, setRunning] = useState(false);
+  const [elevating, setElevating] = useState(false);
+  const [isElevated, setIsElevated] = useState(false);
   const [logs, setLogs] = useState([]);
   const [lastLoadedAt, setLastLoadedAt] = useState('');
   const [listMeta, setListMeta] = useState(emptyListMeta);
@@ -355,6 +365,22 @@ export default function App() {
         }
 
         setSystemLanguages([systemLocale, ...browserLanguageSource()].filter(Boolean));
+      })
+      .catch(() => {});
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    appApi.isElevated()
+      .then((value) => {
+        if (!cancelled) {
+          setIsElevated(Boolean(value));
+        }
       })
       .catch(() => {});
 
@@ -421,9 +447,16 @@ export default function App() {
   ).length;
   const queueProgress =
     activeQueueTotal > 0 ? Math.round((activeQueueCompleted / activeQueueTotal) * 100) : null;
-  const busy = loading || running;
-  const progressActive = loading || running;
-  const progressLabel = running ? t('progress.updating') : t('progress.syncing');
+  const busy = loading || running || elevating;
+  const progressActive = loading || running || elevating;
+  const progressLabel = elevating
+    ? t('progress.elevating')
+    : running
+      ? t('progress.updating')
+      : t('progress.syncing');
+  const requiresAdminFailure = packages.some(
+    (item) => item.status === 'failed' && failureKindFor(item) === 'requires-admin'
+  );
   const countAlert = listMeta.countMismatch
     ? t('alerts.countMismatch', { wingetCount, displayedCount: packages.length })
     : unknownVersionCount > 0 && !options.includeUnknown
@@ -641,6 +674,35 @@ export default function App() {
     setActiveQueueIds([]);
   }
 
+  async function restartAsAdmin() {
+    if (busy || isElevated) {
+      return;
+    }
+
+    setElevating(true);
+    addLog(tRef.current('logs.elevationRequested'));
+
+    try {
+      const result = await appApi.restartElevated();
+
+      if (result?.alreadyElevated) {
+        setIsElevated(true);
+        setElevating(false);
+        addLog(tRef.current('logs.alreadyElevated'));
+        return;
+      }
+
+      if (!result?.ok) {
+        const message = result?.message || result?.code || 'unknown';
+        addLog(tRef.current('logs.elevationFailed', { message }));
+        setElevating(false);
+      }
+    } catch (error) {
+      addLog(tRef.current('logs.elevationFailed', { message: error.message }));
+      setElevating(false);
+    }
+  }
+
   if (!hasNativeApi) {
     return <NativeOnlyScreen t={t} />;
   }
@@ -793,6 +855,17 @@ export default function App() {
                 <RefreshCw size={17} className={loading ? 'spin' : ''} />
                 {t('actions.refresh')}
               </button>
+              {!isElevated ? (
+                <button
+                  className={requiresAdminFailure ? 'button warning' : 'button secondary'}
+                  onClick={restartAsAdmin}
+                  disabled={busy}
+                  title={t('tooltips.restartAsAdmin')}
+                >
+                  <ShieldAlert size={17} />
+                  {elevating ? t('actions.elevating') : t('actions.restartAsAdmin')}
+                </button>
+              ) : null}
               <button
                 className="button primary"
                 onClick={runSelectedUpdates}

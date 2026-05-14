@@ -27,3 +27,8 @@ contextBridge.exposeInMainWorld('windowApi', {
 contextBridge.exposeInMainWorld('localeApi', {
   getSystemLocale: () => ipcRenderer.invoke('app:get-locale')
 });
+
+contextBridge.exposeInMainWorld('appApi', {
+  isElevated: () => ipcRenderer.invoke('app:is-elevated'),
+  restartElevated: () => ipcRenderer.invoke('app:restart-elevated')
+});

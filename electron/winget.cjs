@@ -585,6 +585,14 @@ function classifyWingetFailure(result) {
     .join('\n');
 
   if (
+    /Error\s+1730/i.test(output) ||
+    /must be an Administrator/i.test(output) ||
+    /관리자.*(?:제거|권한|실행)/.test(output)
+  ) {
+    return 'requires-admin';
+  }
+
+  if (
     /설치 종료 코드로 인해/.test(output) ||
     /MsiExec .*failed:\s*-?\d+/i.test(output) ||
     /\b1603\b/.test(output)

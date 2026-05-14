@@ -1,5 +1,10 @@
 const path = require('node:path');
 const { app, BrowserWindow, ipcMain } = require('electron');
+const {
+  getRelaunchArgs,
+  isRunningElevated,
+  startElevatedRestart
+} = require('./elevation.cjs');
 const { createWingetRunner } = require('./winget.cjs');
 
 const runner = createWingetRunner();
@@ -117,6 +122,33 @@ ipcMain.handle('window:is-maximized', (event) => {
 });
 
 ipcMain.handle('app:get-locale', () => app.getLocale());
+
+ipcMain.handle('app:is-elevated', () => isRunningElevated());
+
+ipcMain.handle('app:restart-elevated', async () => {
+  if (isRunningElevated()) {
+    return {
+      ok: true,
+      alreadyElevated: true
+    };
+  }
+
+  const result = await startElevatedRestart({
+    filePath: process.execPath,
+    args: getRelaunchArgs({
+      isPackaged: app.isPackaged,
+      appPath: app.getAppPath(),
+      argv: process.argv
+    }),
+    cwd: process.cwd()
+  });
+
+  if (result.ok) {
+    app.quit();
+  }
+
+  return result;
+});
 
 app.whenReady().then(() => {
   createWindow();

@@ -491,6 +491,12 @@ button {
   background: var(--ink);
 }
 
+.button.warning {
+  color: #7a2e0e;
+  border-color: rgba(180, 83, 9, 0.22);
+  background: rgba(251, 146, 60, 0.13);
+}
+
 .command-strip .button {
   min-height: 34px;
   padding: 0 12px;
@@ -939,6 +945,10 @@ td:nth-child(7) {
 .status-cell.failure-id-resolution .status-icon.failed,
 .status-cell.failure-id-resolution .status-icon {
   color: #b42318;
+}
+
+.status-cell.failure-requires-admin .status-icon.failed {
+  color: #b45309;
 }
 
 .status-cell.failure-not-applicable .status-icon.failed,

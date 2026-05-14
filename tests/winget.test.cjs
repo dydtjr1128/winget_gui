@@ -325,6 +325,23 @@ test('classifies a winget MSI uninstall failure as installer failure', () => {
   assert.equal(kind, 'installer');
 });
 
+test('classifies a winget MSI administrator failure as requiring elevation', () => {
+  const kind = classifyWingetFailure({
+    ok: false,
+    code: 1,
+    stdout: `
+패키지 제거를 시작하는 중...
+설치 종료 코드로 인해 제거하지 못함: 1603
+`,
+    stderr: `
+Product: Microsoft Build of OpenJDK  21.0.10+7 (x64) -- Error 1730.
+You must be an Administrator to remove this application.
+`
+  });
+
+  assert.equal(kind, 'requires-admin');
+});
+
 test('summarizes a winget applicability failure with the explanatory line', () => {
   const detail = summarizeWingetFailure({
     ok: false,
