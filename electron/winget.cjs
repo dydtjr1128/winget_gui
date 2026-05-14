@@ -267,6 +267,13 @@ function getTruncatedPrefix(value) {
   return String(value ?? '').split(TRUNCATION_PATTERN)[0].trim();
 }
 
+function normalizeSearchName(value) {
+  return String(value ?? '')
+    .normalize('NFKC')
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu, '');
+}
+
 function getSearchHeaderStarts(headerLine) {
   const headerSets = [
     [
@@ -347,7 +354,7 @@ function parseWingetSearchRows(output) {
 function resolvePackageIdFromSearchOutput(output, prefix, source = '', name = '') {
   const normalizedPrefix = String(prefix ?? '').trim().toLowerCase();
   const normalizedSource = String(source ?? '').trim().toLowerCase();
-  const normalizedNamePrefix = getTruncatedPrefix(name).toLowerCase();
+  const normalizedNamePrefix = normalizeSearchName(getTruncatedPrefix(name));
   if (!normalizedPrefix) {
     return null;
   }
@@ -355,7 +362,7 @@ function resolvePackageIdFromSearchOutput(output, prefix, source = '', name = ''
   const candidates = parseWingetSearchRows(output).filter((row) => {
     const id = String(row.id ?? '');
     const rowSource = String(row.source ?? '').trim().toLowerCase();
-    const rowName = String(row.name ?? '').trim().toLowerCase();
+    const rowName = normalizeSearchName(row.name);
 
     return (
       id &&

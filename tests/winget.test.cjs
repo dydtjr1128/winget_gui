@@ -292,6 +292,47 @@ Visual Studio Build Tools 2022 Microsoft.VisualStudio.2022.BuildTools  17.14.32 
   );
 });
 
+test('resolves Visual Studio Build Tools when winget search omits source and compacts the name', () => {
+  const output2022 = `
+이름                                           장치 ID                                    버전
+--------------------------------------------------------------------------------------------------
+Visual Studio BuildTools 2022                  Microsoft.VisualStudio.2022.BuildTools     17.14.32
+Visual Studio Community 2022                   Microsoft.VisualStudio.2022.Community      17.14.32
+Visual Studio Enterprise 2022                  Microsoft.VisualStudio.2022.Enterprise     17.14.32
+Visual Studio 2022 Remote Debugger for Devices Microsoft.VisualStudio.2022.OnecoreMsvsmon 17.14.6
+Visual Studio Professional 2022                Microsoft.VisualStudio.2022.Professional   17.14.32
+Remote Tools for Visual Studio 2022            Microsoft.VisualStudio.2022.RemoteTools    17.14.8
+`;
+  const output2019 = `
+이름                                   장치 ID                                  버전
+----------------------------------------------------------------------------------------
+Visual Studio Enterprise 2017          Microsoft.VisualStudio.2017.Enterprise   15.9.70
+Visual Studio BuildTools 2019          Microsoft.VisualStudio.2019.BuildTools   16.11.56
+Microsoft Visual Studio Community 2019 Microsoft.VisualStudio.2019.Community    16.11.53
+Visual Studio Enterprise 2019          Microsoft.VisualStudio.2019.Enterprise   16.11.56
+Visual Studio Professional 2019        Microsoft.VisualStudio.2019.Professional 16.11.56
+`;
+
+  assert.equal(
+    resolvePackageIdFromSearchOutput(
+      output2022,
+      'Microsoft.VisualStudio.202',
+      'winget',
+      'Visual Studio Build Tools …'
+    ),
+    'Microsoft.VisualStudio.2022.BuildTools'
+  );
+  assert.equal(
+    resolvePackageIdFromSearchOutput(
+      output2019,
+      'Microsoft.VisualStudio.201',
+      'winget',
+      'Visual Studio Build Tools …'
+    ),
+    'Microsoft.VisualStudio.2019.BuildTools'
+  );
+});
+
 test('summarizes a winget MSI uninstall failure for hover details', () => {
   const detail = summarizeWingetFailure({
     ok: false,
