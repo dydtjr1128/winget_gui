@@ -1,6 +1,6 @@
 {
   "name": "winget-gui",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "description": "Electron GUI for selecting and running winget package upgrades.",
   "main": "electron/main.cjs",

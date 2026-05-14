@@ -3,10 +3,13 @@ const test = require('node:test');
 
 const {
   buildListArgs,
+  buildSearchArgs,
   buildUpgradeArgs,
+  classifyWingetFailure,
   createTerminalLogProcessor,
   parseWingetUpgradeOutput,
   parseWingetUpgradeResult,
+  resolvePackageIdFromSearchOutput,
   sanitizeWingetOutput,
   summarizeWingetFailure
 } = require('../electron/winget.cjs');
@@ -234,6 +237,61 @@ test('builds list arguments with visibility options', () => {
   ]);
 });
 
+test('builds search arguments for resolving truncated package ids', () => {
+  assert.deepEqual(buildSearchArgs('Microsoft.VisualStudio.202', 'winget'), [
+    'search',
+    '--id',
+    'Microsoft.VisualStudio.202',
+    '--source',
+    'winget',
+    '--accept-source-agreements',
+    '--disable-interactivity'
+  ]);
+});
+
+test('resolves a truncated package id from winget search output', () => {
+  const output = `
+Name                           Id                                      Version   Source
+--------------------------------------------------------------------------------------
+Visual Studio Build Tools 2022 Microsoft.VisualStudio.2022.BuildTools 17.14.32 winget
+`;
+
+  assert.equal(
+    resolvePackageIdFromSearchOutput(output, 'Microsoft.VisualStudio.202', 'winget'),
+    'Microsoft.VisualStudio.2022.BuildTools'
+  );
+});
+
+test('does not resolve a truncated package id when search results are ambiguous', () => {
+  const output = `
+Name                         Id                                      Version   Source
+------------------------------------------------------------------------------------
+Visual Studio Community 2022 Microsoft.VisualStudio.2022.Community  17.14.32 winget
+Visual Studio Build Tools 2022 Microsoft.VisualStudio.2022.BuildTools 17.14.32 winget
+`;
+
+  assert.equal(resolvePackageIdFromSearchOutput(output, 'Microsoft.VisualStudio.2022', 'winget'), null);
+});
+
+test('uses the truncated display name to disambiguate package id search results', () => {
+  const output = `
+Name                           Id                                      Version   Source
+--------------------------------------------------------------------------------------
+Visual Studio Community 2022   Microsoft.VisualStudio.2022.Community   17.14.32 winget
+Visual Studio Build Tools 2022 Microsoft.VisualStudio.2022.BuildTools  17.14.32 winget
+`;
+
+  assert.equal(
+    resolvePackageIdFromSearchOutput(
+      output,
+      'Microsoft.VisualStudio.202',
+      'winget',
+      'Visual Studio Build Tools …'
+    ),
+    'Microsoft.VisualStudio.2022.BuildTools'
+  );
+});
+
 test('summarizes a winget MSI uninstall failure for hover details', () => {
   const detail = summarizeWingetFailure({
     ok: false,
@@ -249,6 +307,22 @@ test('summarizes a winget MSI uninstall failure for hover details', () => {
   });
 
   assert.equal(detail, '설치 종료 코드로 인해 제거하지 못함: 1603');
+});
+
+test('classifies a winget MSI uninstall failure as installer failure', () => {
+  const kind = classifyWingetFailure({
+    ok: false,
+    code: 1,
+    stdout: `
+찾음 Microsoft Build of OpenJDK with Hotspot 17 [Microsoft.OpenJDK.17] 버전 17.0.19.10
+설치 관리자 해시를 확인했습니다.
+패키지 제거를 시작하는 중...
+설치 종료 코드로 인해 제거하지 못함: 1603
+`,
+    stderr: ''
+  });
+
+  assert.equal(kind, 'installer');
 });
 
 test('summarizes a winget applicability failure with the explanatory line', () => {

@@ -2,6 +2,7 @@ const { spawn } = require('node:child_process');
 const { EventEmitter } = require('node:events');
 
 const ANSI_PATTERN = /\u001b\[[0-?]*[ -/]*[@-~]/g;
+const TRUNCATION_PATTERN = /…|\.\.\./;
 
 function stripTerminalControlSequences(text) {
   return String(text ?? '')
@@ -184,12 +185,17 @@ function getFixedValue(line, column, nextColumn) {
   return line.slice(start, end).trim();
 }
 
+function isPackageId(value) {
+  return /^[A-Za-z0-9][A-Za-z0-9._+-]{2,}$/.test(value);
+}
+
+function isKnownSource(value) {
+  return /^(winget|msstore)$/i.test(value);
+}
+
 function parseDataLine(line, options = {}) {
   const allowMissingSource = options.allowMissingSource !== false;
   const tokens = line.trim().split(/\s+/);
-
-  const isPackageId = (value) => /^[A-Za-z0-9][A-Za-z0-9._+-]{2,}$/.test(value);
-  const isKnownSource = (value) => /^(winget|msstore)$/i.test(value);
 
   if (tokens.length >= 5 && isKnownSource(tokens[tokens.length - 1])) {
     const source = tokens[tokens.length - 1];
@@ -227,6 +233,141 @@ function parseDataLine(line, options = {}) {
   }
 
   return null;
+}
+
+function parseSearchDataLine(line) {
+  const tokens = line.trim().split(/\s+/);
+
+  if (tokens.length < 4 || !isKnownSource(tokens[tokens.length - 1])) {
+    return null;
+  }
+
+  const source = tokens[tokens.length - 1];
+  const version = tokens[tokens.length - 2];
+  const id = tokens[tokens.length - 3];
+  const name = tokens.slice(0, -3).join(' ');
+
+  if (!name || !isPackageId(id)) {
+    return null;
+  }
+
+  return {
+    name,
+    id,
+    version,
+    source
+  };
+}
+
+function hasTruncatedMarker(value) {
+  return TRUNCATION_PATTERN.test(String(value ?? ''));
+}
+
+function getTruncatedPrefix(value) {
+  return String(value ?? '').split(TRUNCATION_PATTERN)[0].trim();
+}
+
+function getSearchHeaderStarts(headerLine) {
+  const headerSets = [
+    [
+      ['name', 'Name'],
+      ['id', ['Id', 'ID']],
+      ['version', 'Version'],
+      ['source', 'Source']
+    ],
+    [
+      ['name', '이름'],
+      ['id', ['장치 ID', 'ID']],
+      ['version', '버전'],
+      ['source', '원본']
+    ]
+  ];
+
+  for (const headers of headerSets) {
+    const columns = headers
+      .map(([key, labels]) => ({ key, start: findHeaderLabelStart(headerLine, labels) }))
+      .filter((column) => column.start >= 0)
+      .sort((a, b) => a.start - b.start);
+
+    const keys = new Set(columns.map((column) => column.key));
+    if (keys.has('name') && keys.has('id') && keys.has('version')) {
+      return columns;
+    }
+  }
+
+  return [];
+}
+
+function parseWingetSearchRows(output) {
+  const lines = sanitizeWingetOutput(output)
+    .split(/\r?\n/)
+    .map((line) => line.trimEnd());
+
+  const headerIndex = lines.findIndex((line) => getSearchHeaderStarts(line).length >= 3);
+  if (headerIndex < 0) {
+    return [];
+  }
+
+  const columns = getSearchHeaderStarts(lines[headerIndex]);
+  const dataLines = lines.slice(headerIndex + 1).filter((line) => !/^\s*-{4,}\s*$/.test(line));
+  const rows = [];
+
+  for (const line of dataLines) {
+    if (!line.trim() || isWingetMessageLine(line)) {
+      continue;
+    }
+
+    const parsedLine = parseSearchDataLine(line);
+    if (parsedLine) {
+      rows.push(parsedLine);
+      continue;
+    }
+
+    const row = {};
+    for (let index = 0; index < columns.length; index += 1) {
+      const column = columns[index];
+      row[column.key] = getFixedValue(line, column, columns[index + 1]);
+    }
+
+    if (!row.id || !row.version || !isPackageId(row.id)) {
+      continue;
+    }
+
+    rows.push({
+      name: row.name || row.id,
+      id: row.id,
+      version: row.version,
+      source: row.source || ''
+    });
+  }
+
+  return rows;
+}
+
+function resolvePackageIdFromSearchOutput(output, prefix, source = '', name = '') {
+  const normalizedPrefix = String(prefix ?? '').trim().toLowerCase();
+  const normalizedSource = String(source ?? '').trim().toLowerCase();
+  const normalizedNamePrefix = getTruncatedPrefix(name).toLowerCase();
+  if (!normalizedPrefix) {
+    return null;
+  }
+
+  const candidates = parseWingetSearchRows(output).filter((row) => {
+    const id = String(row.id ?? '');
+    const rowSource = String(row.source ?? '').trim().toLowerCase();
+    const rowName = String(row.name ?? '').trim().toLowerCase();
+
+    return (
+      id &&
+      !hasTruncatedMarker(id) &&
+      id.toLowerCase().startsWith(normalizedPrefix) &&
+      (!normalizedNamePrefix || rowName.startsWith(normalizedNamePrefix)) &&
+      (!normalizedSource || !rowSource || rowSource === normalizedSource)
+    );
+  });
+  const uniqueIds = [...new Set(candidates.map((row) => row.id))];
+
+  return uniqueIds.length === 1 ? uniqueIds[0] : null;
 }
 
 function toCount(value) {
@@ -434,6 +575,46 @@ function summarizeWingetFailure(result, options = {}) {
   return 'winget failed without a detailed error message.';
 }
 
+function classifyWingetFailure(result) {
+  if (result?.ok) {
+    return '';
+  }
+
+  const output = [result?.stdout, result?.stderr, summarizeWingetFailure(result)]
+    .filter(Boolean)
+    .join('\n');
+
+  if (
+    /설치 종료 코드로 인해/.test(output) ||
+    /MsiExec .*failed:\s*-?\d+/i.test(output) ||
+    /\b1603\b/.test(output)
+  ) {
+    return 'installer';
+  }
+
+  if (
+    /입력 조건과 일치하는 설치된 패키지를 찾을 수 없습니다/.test(output) ||
+    /No installed package found matching input criteria/i.test(output)
+  ) {
+    return 'not-found';
+  }
+
+  if (
+    /적용 가능한 업그레이드를 찾을 수 없습니다/.test(output) ||
+    /시스템 또는 요구 사항에는 적용되지 않습니다/.test(output) ||
+    /No applicable upgrade found/i.test(output) ||
+    /not applicable to your system or requirements/i.test(output)
+  ) {
+    return 'not-applicable';
+  }
+
+  if (/hash/i.test(output) || /해시/.test(output)) {
+    return 'hash';
+  }
+
+  return 'generic';
+}
+
 function buildListArgs(options = {}) {
   const args = ['upgrade', '--accept-source-agreements'];
 
@@ -444,6 +625,22 @@ function buildListArgs(options = {}) {
   if (options.includePinned) {
     args.push('--include-pinned');
   }
+
+  return args;
+}
+
+function buildSearchArgs(prefix, source = '') {
+  if (!prefix || typeof prefix !== 'string') {
+    throw new Error('A package id prefix is required.');
+  }
+
+  const args = ['search', '--id', prefix];
+
+  if (source) {
+    args.push('--source', source);
+  }
+
+  args.push('--accept-source-agreements', '--disable-interactivity');
 
   return args;
 }
@@ -487,8 +684,9 @@ function createWingetRunner() {
   let currentProcess = null;
   let cancelled = false;
 
-  function runWinget(args) {
+  function runWinget(args, options = {}) {
     return new Promise((resolve) => {
+      const emitOutput = options.emitOutput !== false;
       const child = spawn('winget', args, {
         windowsHide: true,
         shell: false
@@ -497,24 +695,28 @@ function createWingetRunner() {
       currentProcess = child;
       let stdout = '';
       let stderr = '';
-      const logProcessor = createTerminalLogProcessor((entry) => events.emit('log', entry));
+      const logProcessor = emitOutput
+        ? createTerminalLogProcessor((entry) => events.emit('log', entry))
+        : null;
 
       child.stdout.on('data', (chunk) => {
         const text = chunk.toString('utf8');
         stdout += text;
-        logProcessor.write(text);
+        logProcessor?.write(text);
       });
 
       child.stderr.on('data', (chunk) => {
         const text = chunk.toString('utf8');
         stderr += text;
-        logProcessor.write(text);
+        logProcessor?.write(text);
       });
 
       child.on('error', (error) => {
         currentProcess = null;
-        logProcessor.flush();
-        events.emit('log', error.message);
+        logProcessor?.flush();
+        if (emitOutput) {
+          events.emit('log', error.message);
+        }
         resolve({
           ok: false,
           code: -1,
@@ -525,7 +727,7 @@ function createWingetRunner() {
 
       child.on('close', (code) => {
         currentProcess = null;
-        logProcessor.flush();
+        logProcessor?.flush();
         resolve({
           ok: code === 0,
           code,
@@ -536,14 +738,57 @@ function createWingetRunner() {
     });
   }
 
+  async function resolveTruncatedPackageIds(packages) {
+    const resolvedPackages = [];
+
+    for (const item of packages) {
+      if (!hasTruncatedMarker(item.id)) {
+        resolvedPackages.push({
+          ...item,
+          idResolutionStatus: 'complete'
+        });
+        continue;
+      }
+
+      const prefix = getTruncatedPrefix(item.id);
+      events.emit('log', `잘린 패키지 ID 확인 중: ${item.id}`);
+      const result = await runWinget(buildSearchArgs(prefix, item.source), { emitOutput: false });
+      const resolvedId = result.ok
+        ? resolvePackageIdFromSearchOutput(result.stdout, prefix, item.source, item.name)
+        : null;
+
+      if (resolvedId) {
+        events.emit('log', `패키지 ID 보강: ${item.id} → ${resolvedId}`);
+        resolvedPackages.push({
+          ...item,
+          id: resolvedId,
+          resolvedFromId: item.id,
+          idResolutionStatus: 'resolved'
+        });
+        continue;
+      }
+
+      events.emit('log', `패키지 ID 보강 실패: ${item.id}`);
+      resolvedPackages.push({
+        ...item,
+        idResolutionStatus: 'unresolved'
+      });
+    }
+
+    return resolvedPackages;
+  }
+
   async function listUpgrades(options = {}) {
     cancelled = false;
     events.emit('log', 'winget upgrade 목록을 불러오는 중...');
     const result = await runWinget(buildListArgs(options));
     const parsed = parseWingetUpgradeResult(result.stdout);
+    const packages = await resolveTruncatedPackageIds(parsed.packages);
     return {
       ...result,
-      ...parsed
+      ...parsed,
+      packages,
+      parsedCount: packages.length
     };
   }
 
@@ -563,16 +808,34 @@ function createWingetRunner() {
         continue;
       }
 
-      const args = buildUpgradeArgs(item.id, options);
       events.emit('package-start', item);
       events.emit('log', `업데이트 시작: ${item.name || item.id}`);
+      if (hasTruncatedMarker(item.id)) {
+        const itemResult = {
+          id: item.id,
+          name: item.name,
+          ok: false,
+          code: null,
+          failureKind: 'id-resolution',
+          failureDetail: `winget 목록에서 패키지 ID가 잘려 안전하게 업데이트할 수 없습니다: ${item.id}`,
+          stdout: '',
+          stderr: ''
+        };
+        results.push(itemResult);
+        events.emit('package-complete', itemResult);
+        continue;
+      }
+
+      const args = buildUpgradeArgs(item.id, options);
       const result = await runWinget(args);
+      const failureDetail = summarizeWingetFailure(result);
       const itemResult = {
         id: item.id,
         name: item.name,
         ok: result.ok,
         code: result.code,
-        failureDetail: summarizeWingetFailure(result),
+        failureKind: classifyWingetFailure(result),
+        failureDetail,
         stdout: result.stdout,
         stderr: result.stderr
       };
@@ -601,11 +864,14 @@ function createWingetRunner() {
 
 module.exports = {
   buildListArgs,
+  buildSearchArgs,
   buildUpgradeArgs,
+  classifyWingetFailure,
   createTerminalLogProcessor,
   createWingetRunner,
   parseWingetUpgradeOutput,
   parseWingetUpgradeResult,
+  resolvePackageIdFromSearchOutput,
   sanitizeWingetOutput,
   summarizeWingetFailure
 };

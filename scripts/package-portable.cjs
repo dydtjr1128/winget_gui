@@ -51,6 +51,8 @@ fs.writeFileSync(
     'Winget GUI Portable',
     '',
     'Winget GUI.exe 를 실행하면 설치 없이 바로 시작됩니다.',
+    '이 앱은 브라우저용 정적 웹앱이 아니라 Electron PC 앱입니다.',
+    '실제 winget 목록 조회와 업데이트는 이 exe 안에서만 동작합니다.',
     'Windows winget 명령을 사용하므로 Windows 10/11과 winget이 필요합니다.',
     ''
   ].join('\r\n'),

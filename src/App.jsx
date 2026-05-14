@@ -109,8 +109,64 @@ function statusLabel(status, t) {
   return t('status.idle');
 }
 
-function failureDetailFor(item) {
-  return item.status === 'failed' ? String(item.failureDetail ?? '').trim() : '';
+function isPackageSelectable(item) {
+  return item.idResolutionStatus !== 'unresolved';
+}
+
+function failureKindFor(item) {
+  return item.failureKind || 'generic';
+}
+
+function failureKindLabel(kind, t) {
+  return t(`failure.kind.${kind || 'generic'}`);
+}
+
+function failureAdviceFor(kind, t) {
+  return t(`failure.advice.${kind || 'generic'}`);
+}
+
+function statusTextFor(item, t) {
+  if (item.idResolutionStatus === 'unresolved') {
+    return t('status.needsAttention');
+  }
+
+  if (item.status === 'failed') {
+    return failureKindLabel(failureKindFor(item), t);
+  }
+
+  return statusLabel(item.status, t);
+}
+
+function statusDetailFor(item, t) {
+  if (item.idResolutionStatus === 'unresolved') {
+    return t('status.idResolutionDetail', { id: item.id });
+  }
+
+  if (item.status !== 'failed') {
+    return '';
+  }
+
+  const kind = failureKindFor(item);
+  const detail = String(item.failureDetail ?? '').trim();
+  const advice = failureAdviceFor(kind, t);
+
+  return [failureKindLabel(kind, t), detail, advice].filter(Boolean).join('\n');
+}
+
+function statusClassNameFor(item, detail) {
+  const classes = ['status-cell'];
+
+  if (detail) {
+    classes.push('has-detail');
+  }
+
+  if (item.idResolutionStatus === 'unresolved') {
+    classes.push('needs-attention', 'failure-id-resolution');
+  } else if (item.status === 'failed') {
+    classes.push(`failure-${failureKindFor(item)}`);
+  }
+
+  return classes.join(' ');
 }
 
 function StatusIcon({ status, t }) {
@@ -127,13 +183,13 @@ function StatusIcon({ status, t }) {
 }
 
 function StatusCell({ item, t }) {
-  const label = statusLabel(item.status, t);
-  const detail = failureDetailFor(item);
+  const label = statusTextFor(item, t);
+  const detail = statusDetailFor(item, t);
   const title = detail ? `${t('status.failureDetail')}\n${detail}` : label;
 
   return (
     <div
-      className={detail ? 'status-cell has-detail' : 'status-cell'}
+      className={statusClassNameFor(item, detail)}
       title={title}
       data-detail={detail || undefined}
       tabIndex={detail ? 0 : undefined}
@@ -341,10 +397,18 @@ export default function App() {
     [packages, query]
   );
 
-  const selectedPackages = useMemo(() => packages.filter((item) => item.selected), [packages]);
+  const selectedPackages = useMemo(
+    () => packages.filter((item) => item.selected && isPackageSelectable(item)),
+    [packages]
+  );
+  const selectableVisiblePackages = useMemo(
+    () => visiblePackages.filter((item) => isPackageSelectable(item)),
+    [visiblePackages]
+  );
   const allVisibleSelected =
-    visiblePackages.length > 0 && visiblePackages.every((item) => item.selected);
-  const someVisibleSelected = visiblePackages.some((item) => item.selected);
+    selectableVisiblePackages.length > 0 &&
+    selectableVisiblePackages.every((item) => item.selected);
+  const someVisibleSelected = selectableVisiblePackages.some((item) => item.selected);
   const finishedCount = packages.filter((item) => item.status === 'success').length;
   const failedCount = packages.filter((item) => item.status === 'failed').length;
   const pendingCount = Math.max(packages.length - finishedCount - failedCount, 0);
@@ -365,6 +429,23 @@ export default function App() {
     : unknownVersionCount > 0 && !options.includeUnknown
       ? t('alerts.unknownHidden', { count: unknownVersionCount })
       : '';
+  const failureSummary = useMemo(() => {
+    const failedPackages = packages.filter((item) => item.status === 'failed');
+    if (failedPackages.length === 0) {
+      return '';
+    }
+
+    const counts = failedPackages.reduce((accumulator, item) => {
+      const kind = failureKindFor(item);
+      accumulator[kind] = (accumulator[kind] ?? 0) + 1;
+      return accumulator;
+    }, {});
+    const summary = Object.entries(counts)
+      .map(([kind, count]) => t(`failure.summary.${kind}`, { count }))
+      .join(', ');
+
+    return t('alerts.failureSummary', { count: failedPackages.length, summary });
+  }, [packages, t]);
 
   useEffect(() => {
     if (!api) {
@@ -376,7 +457,9 @@ export default function App() {
       api.onPackageStart((item) => {
         setPackages((current) =>
           current.map((pkg) =>
-            pkg.id === item.id ? { ...pkg, status: 'running', failureDetail: '' } : pkg
+            pkg.id === item.id
+              ? { ...pkg, status: 'running', failureKind: '', failureDetail: '' }
+              : pkg
           )
         );
       }),
@@ -388,6 +471,7 @@ export default function App() {
                   ...pkg,
                   selected: false,
                   status: result.ok ? 'success' : 'failed',
+                  failureKind: result.ok ? '' : result.failureKind || 'generic',
                   failureDetail: result.ok ? '' : String(result.failureDetail ?? '').trim()
                 }
               : pkg
@@ -432,6 +516,7 @@ export default function App() {
           ...item,
           selected: false,
           status: 'idle',
+          failureKind: '',
           failureDetail: ''
         }))
       );
@@ -476,7 +561,11 @@ export default function App() {
       return;
     }
     setPackages((current) =>
-      current.map((item) => (item.id === id ? { ...item, selected: !item.selected } : item))
+      current.map((item) =>
+        item.id === id && isPackageSelectable(item)
+          ? { ...item, selected: !item.selected }
+          : item
+      )
     );
   }
 
@@ -484,7 +573,7 @@ export default function App() {
     if (busy) {
       return;
     }
-    const visibleIds = new Set(visiblePackages.map((item) => item.id));
+    const visibleIds = new Set(selectableVisiblePackages.map((item) => item.id));
     setPackages((current) =>
       current.map((item) =>
         visibleIds.has(item.id) ? { ...item, selected: !allVisibleSelected } : item
@@ -522,7 +611,7 @@ export default function App() {
     setActiveQueueIds(selectedPackages.map((item) => item.id));
     setPackages((current) =>
       current.map((item) =>
-        item.selected ? { ...item, status: 'idle', failureDetail: '' } : item
+        item.selected ? { ...item, status: 'idle', failureKind: '', failureDetail: '' } : item
       )
     );
     addLog(tRef.current('logs.updateStart', { count: selectedPackages.length }));
@@ -682,6 +771,12 @@ export default function App() {
                     <span>{countAlert}</span>
                   </div>
                 ) : null}
+                {failureSummary && !progressActive ? (
+                  <div className="failure-alert" role="status">
+                    <CircleAlert size={15} />
+                    <span>{failureSummary}</span>
+                  </div>
+                ) : null}
               </div>
               <p>
                 {t('workspace.subtitle', { wingetCount, displayedCount: packages.length })}
@@ -746,7 +841,7 @@ export default function App() {
                     <SelectAllCheckbox
                       checked={allVisibleSelected}
                       indeterminate={someVisibleSelected && !allVisibleSelected}
-                      disabled={visiblePackages.length === 0 || busy}
+                      disabled={selectableVisiblePackages.length === 0 || busy}
                       onChange={toggleVisibleSelection}
                       t={t}
                     />
@@ -763,7 +858,10 @@ export default function App() {
                 {visiblePackages.map((item) => (
                   <tr
                     key={item.id}
-                    className={item.selected ? 'selected-row' : ''}
+                    className={[
+                      item.selected ? 'selected-row' : '',
+                      !isPackageSelectable(item) ? 'blocked-row' : ''
+                    ].filter(Boolean).join(' ')}
                     onClick={() => toggleSelected(item.id)}
                   >
                     <td className="select-column">
@@ -772,7 +870,7 @@ export default function App() {
                         checked={item.selected}
                         onChange={() => toggleSelected(item.id)}
                         onClick={(event) => event.stopPropagation()}
-                        disabled={busy}
+                        disabled={busy || !isPackageSelectable(item)}
                         aria-label={t('aria.selectPackage', { name: item.name })}
                       />
                     </td>
@@ -782,7 +880,16 @@ export default function App() {
                         <span className="app-name">{item.name}</span>
                       </div>
                     </td>
-                    <td className="mono id-cell">{item.id}</td>
+                    <td
+                      className="mono id-cell"
+                      title={
+                        item.resolvedFromId
+                          ? t('table.resolvedIdTitle', { originalId: item.resolvedFromId, id: item.id })
+                          : item.id
+                      }
+                    >
+                      {item.id}
+                    </td>
                     <td className="mono muted">{item.installedVersion}</td>
                     <td className="mono available">{item.availableVersion}</td>
                     <td className="muted">{item.source || '-'}</td>

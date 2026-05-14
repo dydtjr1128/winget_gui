@@ -92,7 +92,8 @@ button {
 .package-cell,
 .status-cell,
 .log-header,
-.count-alert {
+.count-alert,
+.failure-alert {
   display: flex;
   align-items: center;
 }
@@ -626,9 +627,37 @@ button {
   white-space: nowrap;
 }
 
-.count-alert svg {
+.count-alert span,
+.failure-alert span,
+.status-cell span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.failure-alert {
+  gap: 6px;
+  max-width: min(560px, 100%);
+  min-height: 28px;
+  padding: 0 10px;
+  color: #7a2e0e;
+  border: 1px solid rgba(180, 83, 9, 0.22);
+  border-radius: var(--radius-pill);
+  background: rgba(251, 146, 60, 0.12);
+  font-size: 12px;
+  font-weight: 400;
+  letter-spacing: -0.12px;
+  white-space: nowrap;
+}
+
+.count-alert svg,
+.failure-alert svg {
   color: var(--primary);
   flex: 0 0 auto;
+}
+
+.failure-alert svg {
+  color: #b45309;
 }
 
 .table-region {
@@ -725,6 +754,15 @@ tbody tr:hover {
 
 tbody tr.selected-row {
   background: rgba(0, 102, 204, 0.07);
+}
+
+tbody tr.blocked-row {
+  cursor: not-allowed;
+  opacity: 0.74;
+}
+
+tbody tr.blocked-row:hover {
+  background: var(--canvas);
 }
 
 th:nth-child(2),
@@ -827,6 +865,7 @@ td:nth-child(7) {
 .status-cell {
   position: relative;
   gap: 6px;
+  min-width: 0;
   color: var(--body-muted);
   font-size: 14px;
   font-weight: 400;
@@ -889,6 +928,22 @@ td:nth-child(7) {
 .status-icon.success,
 .status-icon.failed {
   color: var(--primary);
+}
+
+.status-icon.failed,
+.status-cell.needs-attention .status-icon {
+  color: #b45309;
+}
+
+.status-cell.failure-not-found .status-icon.failed,
+.status-cell.failure-id-resolution .status-icon.failed,
+.status-cell.failure-id-resolution .status-icon {
+  color: #b42318;
+}
+
+.status-cell.failure-not-applicable .status-icon.failed,
+.status-cell.failure-hash .status-icon.failed {
+  color: #7c3aed;
 }
 
 .status-dot {

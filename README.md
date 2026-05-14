@@ -1,6 +1,6 @@
 # Winget GUI
 
-Windows `winget`을 GUI 형태로 만들어 원하는 패키지만 골라 업데이트하는 데스크톱 앱입니다.
+Windows `winget`을 GUI 형태로 만들어 원하는 패키지만 골라 업데이트하는 Electron 데스크톱 앱입니다.
 
 ![Winget GUI 패키지 목록 화면](docs/images/winget-gui-package-list.png)
 
@@ -59,11 +59,11 @@ release\Winget GUI Portable\Winget GUI.exe
 GitHub Actions는 `v*` 형식의 태그가 push되면 자동으로 릴리즈를 생성합니다.
 
 ```powershell
-git tag v0.1.0
-git push origin v0.1.0
+git tag v<package.json 버전>
+git push origin v<package.json 버전>
 ```
 
-태그 이름은 `package.json`의 `version`과 일치해야 합니다. 예를 들어 `version`이 `0.1.0`이면 태그는 `v0.1.0`이어야 합니다.
+태그 이름은 `package.json`의 `version`과 일치해야 합니다.
 
 릴리즈에는 다음 Windows x64 실행 파일이 첨부됩니다.
 
