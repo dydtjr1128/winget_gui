@@ -3,6 +3,7 @@ const test = require('node:test');
 
 const {
   buildElevatedRestartPowerShellArgs,
+  getElevatedRelaunchOptions,
   getRelaunchArgs
 } = require('../electron/elevation.cjs');
 
@@ -43,4 +44,24 @@ test('keeps user arguments when relaunching a packaged Electron app', () => {
     }),
     ['--foo']
   );
+});
+
+test('relaunches the original electron-builder portable executable when available', () => {
+  const options = getElevatedRelaunchOptions({
+    isPackaged: true,
+    appPath: 'C:\\Temp\\WingetGuiPortable\\resources\\app.asar',
+    argv: ['C:\\Temp\\WingetGuiPortable\\Winget GUI.exe', '--foo'],
+    execPath: 'C:\\Temp\\WingetGuiPortable\\Winget GUI.exe',
+    cwd: 'C:\\Work',
+    env: {
+      PORTABLE_EXECUTABLE_FILE: 'C:\\PortableApps\\Winget GUI\\Winget-GUI-Portable-0.1.4-x64.exe',
+      PORTABLE_EXECUTABLE_DIR: 'C:\\PortableApps\\Winget GUI'
+    }
+  });
+
+  assert.deepEqual(options, {
+    filePath: 'C:\\PortableApps\\Winget GUI\\Winget-GUI-Portable-0.1.4-x64.exe',
+    args: ['--foo'],
+    cwd: 'C:\\PortableApps\\Winget GUI'
+  });
 });

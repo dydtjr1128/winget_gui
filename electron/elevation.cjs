@@ -1,4 +1,5 @@
 const { spawn, spawnSync } = require('node:child_process');
+const path = require('node:path');
 
 function quotePowerShellSingle(value) {
   return `'${String(value ?? '').replace(/'/g, "''")}'`;
@@ -12,6 +13,29 @@ function getRelaunchArgs({ isPackaged, appPath, argv }) {
   }
 
   return [appPath, ...currentArgv.slice(2)].filter(Boolean);
+}
+
+function getElevatedRelaunchOptions({
+  isPackaged,
+  appPath,
+  argv,
+  execPath,
+  cwd,
+  env = process.env
+}) {
+  const portableFile = typeof env.PORTABLE_EXECUTABLE_FILE === 'string'
+    ? env.PORTABLE_EXECUTABLE_FILE
+    : '';
+  const portableDir = typeof env.PORTABLE_EXECUTABLE_DIR === 'string'
+    ? env.PORTABLE_EXECUTABLE_DIR
+    : '';
+  const filePath = portableFile || execPath;
+
+  return {
+    filePath,
+    args: getRelaunchArgs({ isPackaged, appPath, argv }),
+    cwd: portableFile ? portableDir || path.dirname(portableFile) : cwd
+  };
 }
 
 function buildElevatedRestartPowerShellArgs({ filePath, args = [], cwd = '' }) {
@@ -101,6 +125,7 @@ function startElevatedRestart({
 
 module.exports = {
   buildElevatedRestartPowerShellArgs,
+  getElevatedRelaunchOptions,
   getRelaunchArgs,
   isRunningElevated,
   startElevatedRestart

@@ -1,7 +1,7 @@
 const path = require('node:path');
 const { app, BrowserWindow, ipcMain } = require('electron');
 const {
-  getRelaunchArgs,
+  getElevatedRelaunchOptions,
   isRunningElevated,
   startElevatedRestart
 } = require('./elevation.cjs');
@@ -133,15 +133,15 @@ ipcMain.handle('app:restart-elevated', async () => {
     };
   }
 
-  const result = await startElevatedRestart({
-    filePath: process.execPath,
-    args: getRelaunchArgs({
+  const result = await startElevatedRestart(
+    getElevatedRelaunchOptions({
       isPackaged: app.isPackaged,
       appPath: app.getAppPath(),
-      argv: process.argv
-    }),
-    cwd: process.cwd()
-  });
+      argv: process.argv,
+      execPath: process.execPath,
+      cwd: process.cwd()
+    })
+  );
 
   if (result.ok) {
     app.quit();
