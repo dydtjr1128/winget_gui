@@ -1,4 +1,6 @@
-const { spawn, spawnSync } = require('node:child_process');
+const { spawnSync } = require('node:child_process');
+const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
 
 function quotePowerShellSingle(value) {
@@ -38,28 +40,65 @@ function getElevatedRelaunchOptions({
   };
 }
 
-function buildElevatedRestartPowerShellArgs({ filePath, args = [], cwd = '' }) {
-  if (!filePath || typeof filePath !== 'string') {
-    throw new Error('An executable path is required.');
-  }
-
+function buildStartProcessCommand({ filePath, args = [], cwd = '', elevated = true }) {
   const argumentList =
     args.length > 0
       ? ` -ArgumentList @(${args.map(quotePowerShellSingle).join(', ')})`
       : '';
   const workingDirectory = cwd ? ` -WorkingDirectory ${quotePowerShellSingle(cwd)}` : '';
-  const command = [
-    'Start-Process',
-    '-FilePath',
-    quotePowerShellSingle(filePath),
-    argumentList.trimStart(),
-    workingDirectory.trimStart(),
-    '-Verb RunAs'
+  const verb = elevated ? ' -Verb RunAs' : '';
+  return `Start-Process -FilePath ${quotePowerShellSingle(filePath)}${argumentList}${workingDirectory}${verb}`;
+}
+
+// Builds the PowerShell SCRIPT (run as a detached helper) that first waits for
+// the original instance to fully exit, then relaunches the app elevated. The
+// portable launcher unpacks the app into a single shared directory and will not
+// start a second instance against it, so the elevated relaunch must not begin
+// until the original process (and its child windows) are gone. If the user
+// declines the UAC prompt the app is relaunched without elevation so they are
+// not left with no window at all. The script removes itself when finished.
+function buildDeferredRestartScript({
+  filePath,
+  args = [],
+  cwd = '',
+  waitForName = '',
+  waitForDir = '',
+  timeoutMs = 15000
+}) {
+  if (!filePath || typeof filePath !== 'string') {
+    throw new Error('An executable path is required.');
+  }
+
+  const elevatedStart = buildStartProcessCommand({ filePath, args, cwd, elevated: true });
+  const fallbackStart = buildStartProcessCommand({ filePath, args, cwd, elevated: false });
+  const timeoutSeconds = Math.max(1, Math.round(timeoutMs / 1000));
+
+  const waitBlock =
+    waitForName && waitForDir
+      ? [
+          `$deadline = (Get-Date).AddSeconds(${timeoutSeconds})`,
+          'while ((Get-Date) -lt $deadline) {',
+          `  $running = Get-CimInstance Win32_Process -Filter ${quotePowerShellSingle(
+            `Name='${waitForName}'`
+          )} -ErrorAction SilentlyContinue | Where-Object { $_.ExecutablePath -like ${quotePowerShellSingle(
+            `${waitForDir}\\*`
+          )} }`,
+          '  if (-not $running) { break }',
+          '  Start-Sleep -Milliseconds 250',
+          '}'
+        ].join('\n')
+      : '';
+
+  return [
+    waitBlock,
+    // Give the portable launcher stub a moment to release the extraction
+    // directory after the windows close, before relaunching into it.
+    'Start-Sleep -Milliseconds 700',
+    `try { ${elevatedStart} } catch { ${fallbackStart} }`,
+    'Remove-Item -LiteralPath $PSCommandPath -Force -ErrorAction SilentlyContinue'
   ]
     .filter(Boolean)
-    .join(' ');
-
-  return ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', command];
+    .join('\n');
 }
 
 function isRunningElevated({ platform = process.platform, spawnSyncImpl = spawnSync } = {}) {
@@ -75,58 +114,73 @@ function isRunningElevated({ platform = process.platform, spawnSyncImpl = spawnS
   return result.status === 0;
 }
 
-function startElevatedRestart({
+// Writes the deferred-restart helper to a temporary script and launches it as a
+// fully independent process via Start-Process, so it survives this process
+// quitting. (A child started with child_process.spawn — even detached — does
+// not reliably outlive an Electron app.quit(); a Start-Process launch does.)
+// Returns immediately; the caller should quit so the elevated copy can take
+// over once this instance is gone.
+function startDeferredElevatedRestart({
   filePath,
   args = [],
   cwd = '',
+  waitForName = '',
+  waitForDir = '',
+  timeoutMs = 15000,
   platform = process.platform,
-  spawnImpl = spawn
+  tmpDir = os.tmpdir(),
+  pid = process.pid,
+  writeFileImpl = fs.writeFileSync,
+  spawnSyncImpl = spawnSync
 }) {
   if (platform !== 'win32') {
-    return Promise.resolve({
+    return {
       ok: false,
-      code: null,
       message: 'Administrator elevation is only available on Windows.'
-    });
+    };
   }
 
-  return new Promise((resolve) => {
-    const child = spawnImpl(
+  if (!filePath || typeof filePath !== 'string') {
+    return { ok: false, message: 'An executable path is required.' };
+  }
+
+  try {
+    const scriptPath = path.join(tmpDir, `winget-gui-elevate-${pid}.ps1`);
+    const script = buildDeferredRestartScript({
+      filePath,
+      args,
+      cwd,
+      waitForName,
+      waitForDir,
+      timeoutMs
+    });
+    writeFileImpl(scriptPath, script, 'utf8');
+
+    const launchCommand =
+      `Start-Process -FilePath 'powershell.exe' -WindowStyle Hidden -ArgumentList ` +
+      `@('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', ${quotePowerShellSingle(scriptPath)})`;
+
+    const result = spawnSyncImpl(
       'powershell.exe',
-      buildElevatedRestartPowerShellArgs({ filePath, args, cwd }),
-      {
-        windowsHide: true,
-        stdio: ['ignore', 'ignore', 'pipe']
-      }
+      ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', launchCommand],
+      { windowsHide: true }
     );
-    let stderr = '';
 
-    child.stderr?.on('data', (chunk) => {
-      stderr += chunk.toString('utf8');
-    });
+    if (result && result.error) {
+      return { ok: false, message: result.error.message };
+    }
 
-    child.on('error', (error) => {
-      resolve({
-        ok: false,
-        code: -1,
-        message: error.message
-      });
-    });
-
-    child.on('close', (code) => {
-      resolve({
-        ok: code === 0,
-        code,
-        message: stderr.trim()
-      });
-    });
-  });
+    return { ok: true };
+  } catch (error) {
+    return { ok: false, message: error.message };
+  }
 }
 
 module.exports = {
-  buildElevatedRestartPowerShellArgs,
+  buildDeferredRestartScript,
+  buildStartProcessCommand,
   getElevatedRelaunchOptions,
   getRelaunchArgs,
   isRunningElevated,
-  startElevatedRestart
+  startDeferredElevatedRestart
 };
