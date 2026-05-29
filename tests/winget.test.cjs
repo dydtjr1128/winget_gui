@@ -3,12 +3,14 @@ const test = require('node:test');
 
 const {
   buildListArgs,
+  buildListByIdArgs,
   buildSearchArgs,
   buildUpgradeArgs,
   classifyWingetFailure,
   createTerminalLogProcessor,
   parseWingetUpgradeOutput,
   parseWingetUpgradeResult,
+  resolvePackageIdFromListOutput,
   resolvePackageIdFromSearchOutput,
   sanitizeWingetOutput,
   summarizeWingetFailure
@@ -249,6 +251,69 @@ test('builds search arguments for resolving truncated package ids', () => {
   ]);
 });
 
+test('builds list arguments for resolving a truncated installed package id', () => {
+  assert.deepEqual(buildListByIdArgs('Microsoft.VCRedist.2015+.x', 'winget'), [
+    'list',
+    '--id',
+    'Microsoft.VCRedist.2015+.x',
+    '--source',
+    'winget',
+    '--accept-source-agreements',
+    '--disable-interactivity'
+  ]);
+});
+
+test('resolves a truncated id from the installed list, ignoring a same-prefix package that is already current', () => {
+  // Both x64 and x86 are installed and share the truncated prefix, but only x64
+  // has an available upgrade (x86 is current). winget search cannot tell them
+  // apart; the installed list can.
+  const listOutput = `
+이름                                                    장치 ID                      버전          사용 가능     원본
+-----------------------------------------------------------------------------------------------------------------------
+Microsoft Visual C++ v14 Redistributable (x64) - 14.50… Microsoft.VCRedist.2015+.x64 14.50.35719.0 14.51.36231.0 winget
+Microsoft Visual C++ 2015-2022 Redistributable (x86) -… Microsoft.VCRedist.2015+.x86 14.51.36231.0               winget
+`;
+
+  assert.equal(
+    resolvePackageIdFromListOutput(
+      listOutput,
+      'Microsoft.VCRedist.2015+.x',
+      'winget',
+      '14.50.35719.0',
+      '14.51.36231.0'
+    ),
+    'Microsoft.VCRedist.2015+.x64'
+  );
+});
+
+test('disambiguates multiple upgradable same-prefix packages by installed version', () => {
+  const listOutput = `
+Name                           Id                Version   Available  Source
+------------------------------------------------------------------------------
+Foo Bar (x64)                  Vendor.Foo.x64    1.0.0     2.0.0      winget
+Foo Bar (x86)                  Vendor.Foo.x86    1.5.0     2.0.0      winget
+`;
+
+  assert.equal(
+    resolvePackageIdFromListOutput(listOutput, 'Vendor.Foo.x', 'winget', '1.5.0', '2.0.0'),
+    'Vendor.Foo.x86'
+  );
+});
+
+test('does not resolve from the installed list when the prefix stays ambiguous', () => {
+  const listOutput = `
+Name                           Id                Version   Available  Source
+------------------------------------------------------------------------------
+Foo Bar (x64)                  Vendor.Foo.x64    1.0.0     2.0.0      winget
+Foo Bar (x86)                  Vendor.Foo.x86    1.0.0     2.0.0      winget
+`;
+
+  assert.equal(
+    resolvePackageIdFromListOutput(listOutput, 'Vendor.Foo.x', 'winget', '1.0.0', '2.0.0'),
+    null
+  );
+});
+
 test('resolves a truncated package id from winget search output', () => {
   const output = `
 Name                           Id                                      Version   Source
@@ -289,6 +354,24 @@ Visual Studio Build Tools 2022 Microsoft.VisualStudio.2022.BuildTools  17.14.32 
       'Visual Studio Build Tools …'
     ),
     'Microsoft.VisualStudio.2022.BuildTools'
+  );
+});
+
+test('resolves a truncated package id when the upgrade name includes the installed version', () => {
+  const output = `
+이름          장치 ID                      버전
+------------------------------------------------
+Clawd on Desk rullerzhou-afk.clawd-on-desk 0.8.0
+`;
+
+  assert.equal(
+    resolvePackageIdFromSearchOutput(
+      output,
+      'rullerzhou-afk.clawd-on-de',
+      'winget',
+      'Clawd on Desk 0.7.1'
+    ),
+    'rullerzhou-afk.clawd-on-desk'
   );
 });
 
@@ -381,6 +464,20 @@ You must be an Administrator to remove this application.
   });
 
   assert.equal(kind, 'requires-admin');
+});
+
+test('classifies installer exit code 2 with a manifest mismatch as a hash failure', () => {
+  const kind = classifyWingetFailure({
+    ok: false,
+    code: 1,
+    stdout: `
+설치 관리자가 종료 코드로 인해 실패함: 2
+다운로드한 설치 파일의 해시가 매니페스트와 다릅니다. 원본이 갱신될 때까지 기다리거나 나중에 다시 시도하세요.
+`,
+    stderr: ''
+  });
+
+  assert.equal(kind, 'hash');
 });
 
 test('summarizes a winget applicability failure with the explanatory line', () => {

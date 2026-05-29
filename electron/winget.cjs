@@ -274,6 +274,19 @@ function normalizeSearchName(value) {
     .replace(/[^\p{L}\p{N}]+/gu, '');
 }
 
+function getSearchNameMatchPrefixes(value) {
+  const prefix = getTruncatedPrefix(value);
+  const withoutTrailingVersion = prefix.replace(
+    /\s+v?\d+(?:[._-]\d+)+(?:[-+][\p{L}\p{N}._-]+)?\s*$/iu,
+    ''
+  );
+  const candidates = [prefix, withoutTrailingVersion]
+    .map((candidate) => normalizeSearchName(candidate))
+    .filter(Boolean);
+
+  return [...new Set(candidates)];
+}
+
 function getSearchHeaderStarts(headerLine) {
   const headerSets = [
     [
@@ -354,7 +367,7 @@ function parseWingetSearchRows(output) {
 function resolvePackageIdFromSearchOutput(output, prefix, source = '', name = '') {
   const normalizedPrefix = String(prefix ?? '').trim().toLowerCase();
   const normalizedSource = String(source ?? '').trim().toLowerCase();
-  const normalizedNamePrefix = normalizeSearchName(getTruncatedPrefix(name));
+  const normalizedNamePrefixes = getSearchNameMatchPrefixes(name);
   if (!normalizedPrefix) {
     return null;
   }
@@ -368,12 +381,83 @@ function resolvePackageIdFromSearchOutput(output, prefix, source = '', name = ''
       id &&
       !hasTruncatedMarker(id) &&
       id.toLowerCase().startsWith(normalizedPrefix) &&
-      (!normalizedNamePrefix || rowName.startsWith(normalizedNamePrefix)) &&
+      (
+        normalizedNamePrefixes.length === 0 ||
+        normalizedNamePrefixes.some((namePrefix) => rowName.startsWith(namePrefix))
+      ) &&
       (!normalizedSource || !rowSource || rowSource === normalizedSource)
     );
   });
   const uniqueIds = [...new Set(candidates.map((row) => row.id))];
 
+  return uniqueIds.length === 1 ? uniqueIds[0] : null;
+}
+
+function versionsMatch(a, b) {
+  const x = getTruncatedPrefix(a);
+  const y = getTruncatedPrefix(b);
+  if (!x || !y) {
+    return false;
+  }
+  return x === y || x.startsWith(y) || y.startsWith(x);
+}
+
+// Resolves a truncated package id against `winget list` (installed packages)
+// output. This is more reliable than a catalog search for upgradable packages:
+// the catalog may hold several same-prefix variants (e.g. VCRedist x64/x86)
+// that share a version and whose catalog name differs from the installed name,
+// but the installed list only contains what is actually installed and carries
+// the installed/available versions to disambiguate. parseWingetUpgradeRows
+// keeps only rows that have an available upgrade, so same-prefix packages that
+// are already current drop out on their own.
+function resolvePackageIdFromListOutput(
+  output,
+  prefix,
+  source = '',
+  installedVersion = '',
+  availableVersion = ''
+) {
+  const normalizedPrefix = String(prefix ?? '').trim().toLowerCase();
+  if (!normalizedPrefix) {
+    return null;
+  }
+
+  const normalizedSource = String(source ?? '').trim().toLowerCase();
+  const candidates = parseWingetUpgradeRows(output).filter((row) => {
+    const id = String(row.id ?? '');
+    const rowSource = String(row.source ?? '').trim().toLowerCase();
+
+    return (
+      id &&
+      !hasTruncatedMarker(id) &&
+      id.toLowerCase().startsWith(normalizedPrefix) &&
+      (!normalizedSource || !rowSource || rowSource === normalizedSource)
+    );
+  });
+
+  if (candidates.length === 0) {
+    return null;
+  }
+
+  let matches = candidates;
+  if (matches.length > 1 && installedVersion) {
+    const byInstalled = matches.filter((row) =>
+      versionsMatch(row.installedVersion, installedVersion)
+    );
+    if (byInstalled.length > 0) {
+      matches = byInstalled;
+    }
+  }
+  if (matches.length > 1 && availableVersion) {
+    const byAvailable = matches.filter((row) =>
+      versionsMatch(row.availableVersion, availableVersion)
+    );
+    if (byAvailable.length > 0) {
+      matches = byAvailable;
+    }
+  }
+
+  const uniqueIds = [...new Set(matches.map((row) => row.id))];
   return uniqueIds.length === 1 ? uniqueIds[0] : null;
 }
 
@@ -660,6 +744,22 @@ function buildSearchArgs(prefix, source = '') {
   return args;
 }
 
+function buildListByIdArgs(prefix, source = '') {
+  if (!prefix || typeof prefix !== 'string') {
+    throw new Error('A package id prefix is required.');
+  }
+
+  const args = ['list', '--id', prefix];
+
+  if (source) {
+    args.push('--source', source);
+  }
+
+  args.push('--accept-source-agreements', '--disable-interactivity');
+
+  return args;
+}
+
 function buildUpgradeArgs(id, options = {}) {
   if (!id || typeof id !== 'string') {
     throw new Error('A package id is required.');
@@ -767,10 +867,33 @@ function createWingetRunner() {
 
       const prefix = getTruncatedPrefix(item.id);
       events.emit('log', `잘린 패키지 ID 확인 중: ${item.id}`);
-      const result = await runWinget(buildSearchArgs(prefix, item.source), { emitOutput: false });
-      const resolvedId = result.ok
-        ? resolvePackageIdFromSearchOutput(result.stdout, prefix, item.source, item.name)
+
+      // Prefer the installed-package list: it only contains what is actually
+      // installed and carries versions to disambiguate same-prefix variants
+      // (e.g. VCRedist x64/x86) that a catalog search cannot tell apart.
+      const listResult = await runWinget(buildListByIdArgs(prefix, item.source), {
+        emitOutput: false
+      });
+      let resolvedId = listResult.ok
+        ? resolvePackageIdFromListOutput(
+            listResult.stdout,
+            prefix,
+            item.source,
+            item.installedVersion,
+            item.availableVersion
+          )
         : null;
+
+      // Fall back to a catalog search (matches by name) when the installed
+      // list cannot resolve it on its own.
+      if (!resolvedId) {
+        const searchResult = await runWinget(buildSearchArgs(prefix, item.source), {
+          emitOutput: false
+        });
+        resolvedId = searchResult.ok
+          ? resolvePackageIdFromSearchOutput(searchResult.stdout, prefix, item.source, item.name)
+          : null;
+      }
 
       if (resolvedId) {
         events.emit('log', `패키지 ID 보강: ${item.id} → ${resolvedId}`);
@@ -879,6 +1002,7 @@ function createWingetRunner() {
 
 module.exports = {
   buildListArgs,
+  buildListByIdArgs,
   buildSearchArgs,
   buildUpgradeArgs,
   classifyWingetFailure,
@@ -886,6 +1010,7 @@ module.exports = {
   createWingetRunner,
   parseWingetUpgradeOutput,
   parseWingetUpgradeResult,
+  resolvePackageIdFromListOutput,
   resolvePackageIdFromSearchOutput,
   sanitizeWingetOutput,
   summarizeWingetFailure
