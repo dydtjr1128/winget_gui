@@ -1,15 +1,30 @@
 const path = require('node:path');
+const fs = require('node:fs');
 const { app, BrowserWindow, ipcMain } = require('electron');
 const {
   getElevatedRelaunchOptions,
   isRunningElevated,
-  startElevatedRestart
+  startDeferredElevatedRestart
 } = require('./elevation.cjs');
 const { createWingetRunner } = require('./winget.cjs');
 
 const runner = createWingetRunner();
 let mainWindow = null;
 let knownPackages = new Map();
+
+function logError(label, detail) {
+  try {
+    const line = `[${new Date().toISOString()}] ${label} ${detail ?? ''}\n`;
+    fs.appendFileSync(path.join(app.getPath('userData'), 'winget-gui-error.log'), line);
+  } catch {
+    // Logging is best-effort; never let it break the app.
+  }
+}
+
+process.on('uncaughtException', (error) => logError('uncaughtException', error?.stack || String(error)));
+process.on('unhandledRejection', (reason) =>
+  logError('unhandledRejection', reason?.stack || String(reason))
+);
 
 function sendToRenderer(channel, payload) {
   if (mainWindow && !mainWindow.isDestroyed()) {
@@ -50,6 +65,12 @@ function createWindow() {
     if (!allowed) {
       event.preventDefault();
     }
+  });
+  mainWindow.webContents.on('did-fail-load', (_event, code, description, url) => {
+    logError('did-fail-load', JSON.stringify({ code, description, url }));
+  });
+  mainWindow.webContents.on('render-process-gone', (_event, details) => {
+    logError('render-process-gone', JSON.stringify(details));
   });
 
   if (loadDist) {
@@ -125,7 +146,7 @@ ipcMain.handle('app:get-locale', () => app.getLocale());
 
 ipcMain.handle('app:is-elevated', () => isRunningElevated());
 
-ipcMain.handle('app:restart-elevated', async () => {
+ipcMain.handle('app:restart-elevated', () => {
   if (isRunningElevated()) {
     return {
       ok: true,
@@ -133,21 +154,37 @@ ipcMain.handle('app:restart-elevated', async () => {
     };
   }
 
-  const result = await startElevatedRestart(
-    getElevatedRelaunchOptions({
-      isPackaged: app.isPackaged,
-      appPath: app.getAppPath(),
-      argv: process.argv,
-      execPath: process.execPath,
-      cwd: process.cwd()
-    })
-  );
+  const { filePath, args, cwd } = getElevatedRelaunchOptions({
+    isPackaged: app.isPackaged,
+    appPath: app.getAppPath(),
+    argv: process.argv,
+    execPath: process.execPath,
+    cwd: process.cwd()
+  });
+
+  // The portable launcher unpacks into a single shared directory and will not
+  // start a second instance against it while this one is alive, which made the
+  // elevated relaunch fail to appear or crash. So hand the relaunch to a
+  // detached helper that waits for THIS instance to fully exit before starting
+  // the elevated copy, then quit. (If the user declines UAC the helper relaunches
+  // without elevation so they are not left with no window.)
+  const result = startDeferredElevatedRestart({
+    filePath,
+    args,
+    cwd,
+    waitForName: path.basename(process.execPath),
+    waitForDir: path.dirname(process.execPath)
+  });
 
   if (result.ok) {
     app.quit();
   }
 
   return result;
+});
+
+app.on('child-process-gone', (_event, details) => {
+  logError('child-process-gone', JSON.stringify(details));
 });
 
 app.whenReady().then(() => {
