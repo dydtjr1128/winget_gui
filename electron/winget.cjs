@@ -907,17 +907,97 @@ function buildUpgradeArgs(id, options = {}) {
   return args;
 }
 
+// Looks for the real winget binary inside the protected, admin-only-writable
+// %ProgramFiles%\WindowsApps install. This is the most trustworthy location: a
+// standard user cannot replace it before elevation. Returns '' when it cannot be
+// read (e.g. when the app is not elevated) so the caller can fall back.
+function findInstalledWingetExe() {
+  const programFiles = process.env.ProgramW6432 || process.env.ProgramFiles;
+  if (!programFiles) {
+    return '';
+  }
+
+  const windowsApps = path.join(programFiles, 'WindowsApps');
+  let entries;
+  try {
+    entries = fs.readdirSync(windowsApps);
+  } catch {
+    return '';
+  }
+
+  const installDirs = entries
+    .filter((name) => /^Microsoft\.DesktopAppInstaller_.+__8wekyb3d8bbwe$/.test(name))
+    .sort()
+    .reverse();
+
+  for (const dir of installDirs) {
+    const exe = path.join(windowsApps, dir, 'winget.exe');
+    try {
+      if (fs.existsSync(exe)) {
+        return exe;
+      }
+    } catch {
+      // Try the next install directory.
+    }
+  }
+
+  return '';
+}
+
+// Resolves winget to the most trusted available path. Because the app runs
+// elevated, a bare `winget` spawn could pick up a malicious winget.exe planted
+// earlier in PATH or in the working directory and run it as administrator.
+// Prefer the admin-only WindowsApps install, then the per-user execution alias,
+// and only fall back to a bare PATH lookup if neither is found.
+let cachedWingetCommand;
+function resolveWingetCommand() {
+  if (cachedWingetCommand !== undefined) {
+    return cachedWingetCommand;
+  }
+
+  const installed = findInstalledWingetExe();
+  if (installed) {
+    cachedWingetCommand = installed;
+    return cachedWingetCommand;
+  }
+
+  const localAppData = process.env.LOCALAPPDATA;
+  const aliasPath = localAppData
+    ? path.join(localAppData, 'Microsoft', 'WindowsApps', 'winget.exe')
+    : '';
+
+  cachedWingetCommand = aliasPath && fs.existsSync(aliasPath) ? aliasPath : 'winget';
+  return cachedWingetCommand;
+}
+
+// A directory only administrators can write to, used as the spawn working
+// directory so a planted ".\\winget.exe" in an attacker-controlled folder can
+// never sit ahead of the resolved winget on the CreateProcess search path.
+function safeSpawnCwd() {
+  const systemRoot = process.env.SystemRoot || process.env.windir || 'C:\\Windows';
+  return path.join(systemRoot, 'System32');
+}
+
 function createWingetRunner() {
   const events = new EventEmitter();
   let currentProcess = null;
   let cancelled = false;
+  let wingetChain = Promise.resolve();
 
   function runWinget(args, options = {}) {
-    return new Promise((resolve) => {
+    const launch = () => new Promise((resolve) => {
+      // A cancel can land while this call is still queued behind another winget
+      // process; do not start a new child once cancellation has been requested.
+      if (cancelled) {
+        resolve({ ok: false, code: null, stdout: '', stderr: '' });
+        return;
+      }
+
       const emitOutput = options.emitOutput !== false;
-      const child = spawn('winget', args, {
+      const child = spawn(resolveWingetCommand(), args, {
         windowsHide: true,
-        shell: false
+        shell: false,
+        cwd: safeSpawnCwd()
       });
 
       currentProcess = child;
@@ -964,6 +1044,16 @@ function createWingetRunner() {
         });
       });
     });
+
+    // Serialize winget invocations: a second concurrent call would otherwise
+    // overwrite the single currentProcess slot that cancel() depends on, so a
+    // cancel could kill the wrong child or none at all.
+    const result = wingetChain.then(launch, launch);
+    wingetChain = result.then(
+      () => undefined,
+      () => undefined
+    );
+    return result;
   }
 
   // Loads installed packages via `winget export`, which emits full, untruncated
