@@ -2,14 +2,18 @@ const assert = require('node:assert/strict');
 const test = require('node:test');
 
 const {
+  buildExportArgs,
   buildListArgs,
   buildListByIdArgs,
   buildSearchArgs,
   buildUpgradeArgs,
   classifyWingetFailure,
   createTerminalLogProcessor,
+  decodeWingetExportBuffer,
+  parseWingetExportPackages,
   parseWingetUpgradeOutput,
   parseWingetUpgradeResult,
+  resolvePackageIdFromExport,
   resolvePackageIdFromListOutput,
   resolvePackageIdFromSearchOutput,
   sanitizeWingetOutput,
@@ -214,8 +218,7 @@ test('builds safe exact-id upgrade arguments', () => {
   assert.deepEqual(buildUpgradeArgs('Git.Git', {
     silent: true,
     includeUnknown: true,
-    includePinned: true,
-    allowReboot: false
+    includePinned: true
   }), [
     'upgrade',
     '--id',
@@ -228,6 +231,11 @@ test('builds safe exact-id upgrade arguments', () => {
     '--include-unknown',
     '--include-pinned'
   ]);
+});
+
+test('never emits --allow-reboot even when a stale allowReboot option is passed', () => {
+  const args = buildUpgradeArgs('Git.Git', { allowReboot: true });
+  assert.ok(!args.includes('--allow-reboot'));
 });
 
 test('builds list arguments with visibility options', () => {
@@ -414,6 +422,169 @@ Visual Studio Professional 2019        Microsoft.VisualStudio.2019.Professional 
     ),
     'Microsoft.VisualStudio.2019.BuildTools'
   );
+});
+
+const EXPORT_JSON = JSON.stringify({
+  $schema: 'https://aka.ms/winget-packages.schema.2.0.json',
+  CreationDate: '2026-06-17T00:00:00.000-00:00',
+  Sources: [
+    {
+      Packages: [
+        { PackageIdentifier: 'Microsoft.DotNet.DesktopRuntime.10', Version: '10.0.8' },
+        { PackageIdentifier: 'Microsoft.DotNet.DesktopRuntime.8', Version: '8.0.27' },
+        { PackageIdentifier: 'Microsoft.DotNet.DesktopRuntime.9', Version: '9.0.16' },
+        { PackageIdentifier: 'Microsoft.VCRedist.2015+.x86', Version: '14.51.36231.0' },
+        { PackageIdentifier: 'Microsoft.VCRedist.2015+.x64', Version: '14.50.35719.0' },
+        { PackageIdentifier: 'Microsoft.DotNet.AspNetCore.8', Version: '8.0.27' }
+      ],
+      SourceDetails: {
+        Argument: 'https://cdn.winget.microsoft.com/cache',
+        Identifier: 'Microsoft.Winget.Source_8wekyb3d8bbwe',
+        Name: 'winget',
+        Type: 'Microsoft.PreIndexed.Package'
+      }
+    }
+  ],
+  WinGetVersion: '1.13.0'
+});
+
+test('builds export arguments that include installed versions', () => {
+  assert.deepEqual(buildExportArgs('C:\\Temp\\winget-gui-export.json'), [
+    'export',
+    '--output',
+    'C:\\Temp\\winget-gui-export.json',
+    '--include-versions',
+    '--accept-source-agreements',
+    '--disable-interactivity'
+  ]);
+});
+
+test('buildExportArgs requires an output path', () => {
+  assert.throws(() => buildExportArgs(''), /output path/);
+});
+
+test('parses winget export packages with full ids and installed versions', () => {
+  const packages = parseWingetExportPackages(EXPORT_JSON);
+
+  assert.equal(packages.length, 6);
+  assert.deepEqual(packages[0], {
+    id: 'Microsoft.DotNet.DesktopRuntime.10',
+    version: '10.0.8',
+    source: 'winget'
+  });
+});
+
+test('parses winget export json that begins with a UTF-8 BOM', () => {
+  const withBom = String.fromCharCode(0xfeff) + EXPORT_JSON;
+  const packages = parseWingetExportPackages(withBom);
+
+  assert.equal(packages.length, 6);
+  assert.equal(packages[0].id, 'Microsoft.DotNet.DesktopRuntime.10');
+});
+
+test('returns an empty list for malformed or empty winget export json', () => {
+  assert.deepEqual(parseWingetExportPackages('not json'), []);
+  assert.deepEqual(parseWingetExportPackages(''), []);
+  assert.deepEqual(parseWingetExportPackages(null), []);
+  assert.deepEqual(parseWingetExportPackages('{}'), []);
+});
+
+test('resolves a truncated id from winget export by installed version', () => {
+  const packages = parseWingetExportPackages(EXPORT_JSON);
+
+  assert.equal(
+    resolvePackageIdFromExport(packages, 'Microsoft.DotNet.DesktopRu', 'winget', '9.0.16'),
+    'Microsoft.DotNet.DesktopRuntime.9'
+  );
+  assert.equal(
+    resolvePackageIdFromExport(packages, 'Microsoft.DotNet.DesktopRu', 'winget', '8.0.27'),
+    'Microsoft.DotNet.DesktopRuntime.8'
+  );
+});
+
+test('disambiguates the VCRedist x64/x86 pair from winget export by installed version', () => {
+  const packages = parseWingetExportPackages(EXPORT_JSON);
+
+  assert.equal(
+    resolvePackageIdFromExport(packages, 'Microsoft.VCRedist.2015+.x', 'winget', '14.51.36231.0'),
+    'Microsoft.VCRedist.2015+.x86'
+  );
+  assert.equal(
+    resolvePackageIdFromExport(packages, 'Microsoft.VCRedist.2015+.x', 'winget', '14.50.35719.0'),
+    'Microsoft.VCRedist.2015+.x64'
+  );
+});
+
+test('resolves a unique-prefix truncated id from winget export without a version', () => {
+  const packages = parseWingetExportPackages(EXPORT_JSON);
+
+  assert.equal(
+    resolvePackageIdFromExport(packages, 'Microsoft.DotNet.AspNetCor', 'winget', ''),
+    'Microsoft.DotNet.AspNetCore.8'
+  );
+});
+
+test('does not resolve from winget export when prefix and version stay ambiguous', () => {
+  const packages = [
+    { id: 'Vendor.Foo.x64', version: '1.0.0', source: 'winget' },
+    { id: 'Vendor.Foo.x86', version: '1.0.0', source: 'winget' }
+  ];
+
+  assert.equal(resolvePackageIdFromExport(packages, 'Vendor.Foo.x', 'winget', '1.0.0'), null);
+});
+
+test('does not resolve from winget export when the source does not match', () => {
+  const packages = [{ id: 'Some.StorePackage', version: '1.0.0', source: 'msstore' }];
+
+  assert.equal(resolvePackageIdFromExport(packages, 'Some.Store', 'winget', '1.0.0'), null);
+});
+
+test('returns null when winget export has no matching prefix', () => {
+  const packages = parseWingetExportPackages(EXPORT_JSON);
+
+  assert.equal(resolvePackageIdFromExport(packages, 'Nonexistent.Package', 'winget', '1.0.0'), null);
+});
+
+test('requires an exact installed-version match for a single export candidate', () => {
+  // The real upgradable package is missing from export; only a same-prefix
+  // sibling with a different version remains. It must not be resolved to it.
+  const packages = [
+    { id: 'Microsoft.DotNet.DesktopRuntime.10', version: '10.0.8', source: 'winget' }
+  ];
+
+  assert.equal(
+    resolvePackageIdFromExport(packages, 'Microsoft.DotNet.DesktopRu', 'winget', '8.0.27'),
+    null
+  );
+});
+
+test('does not resolve a single export candidate on a lenient version prefix', () => {
+  // versionsMatch('9', '9.1') would be true; a non-truncated installed version
+  // must demand exact equality so a sibling is never mis-picked.
+  const packages = [{ id: 'Vendor.Tool.Stable', version: '9', source: 'winget' }];
+
+  assert.equal(resolvePackageIdFromExport(packages, 'Vendor.Tool', 'winget', '9.1'), null);
+});
+
+test('falls back to lenient version matching when the upgrade table truncated the version', () => {
+  const packages = [
+    { id: 'Warp.Warp.Preview', version: 'v0.2026.06.03.09.49.stable_02', source: 'winget' }
+  ];
+
+  assert.equal(
+    resolvePackageIdFromExport(packages, 'Warp.Warp.Pre', 'winget', 'v0.2026.06.03.09.49.stable…'),
+    'Warp.Warp.Preview'
+  );
+});
+
+test('decodes winget export output from utf-8 and utf-16le buffers', () => {
+  assert.equal(decodeWingetExportBuffer(Buffer.from(EXPORT_JSON, 'utf8')), EXPORT_JSON);
+
+  const utf16le = Buffer.concat([
+    Buffer.from([0xff, 0xfe]),
+    Buffer.from(EXPORT_JSON, 'utf16le')
+  ]);
+  assert.equal(parseWingetExportPackages(decodeWingetExportBuffer(utf16le)).length, 6);
 });
 
 test('summarizes a winget MSI uninstall failure for hover details', () => {

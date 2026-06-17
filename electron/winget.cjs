@@ -1,5 +1,8 @@
 const { spawn } = require('node:child_process');
 const { EventEmitter } = require('node:events');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
 
 const ANSI_PATTERN = /\u001b\[[0-?]*[ -/]*[@-~]/g;
 const TRUNCATION_PATTERN = /…|\.\.\./;
@@ -461,6 +464,105 @@ function resolvePackageIdFromListOutput(
   return uniqueIds.length === 1 ? uniqueIds[0] : null;
 }
 
+// Decodes a `winget export` output file. winget writes UTF-8, but guard against
+// a UTF-16 BOM so an encoding quirk does not silently disable export-based
+// resolution by turning the file into unparseable JSON.
+function decodeWingetExportBuffer(buffer) {
+  if (!Buffer.isBuffer(buffer)) {
+    return String(buffer ?? '');
+  }
+  if (buffer.length >= 2 && buffer[0] === 0xff && buffer[1] === 0xfe) {
+    return buffer.toString('utf16le');
+  }
+  if (buffer.length >= 2 && buffer[0] === 0xfe && buffer[1] === 0xff) {
+    const swapped = Buffer.from(buffer);
+    swapped.swap16();
+    return swapped.toString('utf16le');
+  }
+  return buffer.toString('utf8');
+}
+
+// Parses `winget export --include-versions` JSON into a flat list of installed
+// packages. Unlike the human-readable tables, export emits full, untruncated
+// PackageIdentifiers, so it is the most reliable source for resolving a
+// truncated upgrade-list id.
+function parseWingetExportPackages(jsonText) {
+  let parsed;
+  try {
+    const text = String(jsonText ?? '');
+    parsed = JSON.parse(text.charCodeAt(0) === 0xfeff ? text.slice(1) : text);
+  } catch {
+    return [];
+  }
+
+  const sources = Array.isArray(parsed?.Sources) ? parsed.Sources : [];
+  const packages = [];
+
+  for (const source of sources) {
+    const sourceName = String(source?.SourceDetails?.Name ?? '').trim();
+    const entries = Array.isArray(source?.Packages) ? source.Packages : [];
+
+    for (const entry of entries) {
+      const id = String(entry?.PackageIdentifier ?? '').trim();
+      if (!id) {
+        continue;
+      }
+
+      packages.push({
+        id,
+        version: String(entry?.Version ?? '').trim(),
+        source: sourceName
+      });
+    }
+  }
+
+  return packages;
+}
+
+// Resolves a truncated upgrade-list id against the installed packages reported
+// by `winget export`. Export carries full ids plus the installed version, which
+// disambiguates same-prefix variants (e.g. the VCRedist x64/x86 pair) that the
+// truncated table output cannot tell apart.
+function resolvePackageIdFromExport(exportPackages, prefix, source = '', installedVersion = '') {
+  const normalizedPrefix = String(prefix ?? '').trim().toLowerCase();
+  if (!normalizedPrefix) {
+    return null;
+  }
+
+  const normalizedSource = String(source ?? '').trim().toLowerCase();
+  let matches = (Array.isArray(exportPackages) ? exportPackages : []).filter((pkg) => {
+    const id = String(pkg?.id ?? '');
+    const pkgSource = String(pkg?.source ?? '').trim().toLowerCase();
+
+    return (
+      id &&
+      !hasTruncatedMarker(id) &&
+      id.toLowerCase().startsWith(normalizedPrefix) &&
+      (!normalizedSource || !pkgSource || pkgSource === normalizedSource)
+    );
+  });
+
+  // Whenever the installed version is known, require it to match — even for a
+  // single candidate. Export and the upgrade table both report winget's
+  // installed version, so they are equal for the real package; demanding a
+  // match stops a same-prefix sibling (e.g. if export omits the real package)
+  // from being upgraded by mistake. Exact equality is required unless the
+  // upgrade table itself truncated the version, where prefix matching is the
+  // best available signal.
+  if (installedVersion) {
+    const installedTruncated = hasTruncatedMarker(installedVersion);
+    const target = String(installedVersion).trim();
+    matches = matches.filter((pkg) =>
+      installedTruncated
+        ? versionsMatch(pkg.version, installedVersion)
+        : String(pkg.version).trim() === target
+    );
+  }
+
+  const uniqueIds = [...new Set(matches.map((pkg) => pkg.id))];
+  return uniqueIds.length === 1 ? uniqueIds[0] : null;
+}
+
 function toCount(value) {
   const normalized = String(value ?? '').replace(/,/g, '');
   const count = Number.parseInt(normalized, 10);
@@ -760,6 +862,21 @@ function buildListByIdArgs(prefix, source = '') {
   return args;
 }
 
+function buildExportArgs(outputPath) {
+  if (!outputPath || typeof outputPath !== 'string') {
+    throw new Error('An export output path is required.');
+  }
+
+  return [
+    'export',
+    '--output',
+    outputPath,
+    '--include-versions',
+    '--accept-source-agreements',
+    '--disable-interactivity'
+  ];
+}
+
 function buildUpgradeArgs(id, options = {}) {
   if (!id || typeof id !== 'string') {
     throw new Error('A package id is required.');
@@ -785,10 +902,6 @@ function buildUpgradeArgs(id, options = {}) {
 
   if (options.includePinned) {
     args.push('--include-pinned');
-  }
-
-  if (options.allowReboot) {
-    args.push('--allow-reboot');
   }
 
   return args;
@@ -853,8 +966,39 @@ function createWingetRunner() {
     });
   }
 
+  // Loads installed packages via `winget export`, which emits full, untruncated
+  // PackageIdentifiers as JSON. This is the most reliable way to resolve a
+  // truncated upgrade-list id; the table-based list/search fallbacks reprint the
+  // id through the same narrow console and can truncate it again. Returns an
+  // empty list on any failure so callers fall back to the table queries.
+  async function loadInstalledPackagesViaExport() {
+    // A private random temp directory keeps the elevated export output off a
+    // predictable, same-user-writable path and avoids collisions between
+    // concurrent calls.
+    const exportDir = fs.mkdtempSync(path.join(os.tmpdir(), 'winget-gui-export-'));
+    const exportPath = path.join(exportDir, 'packages.json');
+
+    try {
+      // `winget export` writes JSON to the output file (not stdout) and may exit
+      // non-zero when some installed packages are absent from a source, so read
+      // the file regardless of the exit code.
+      await runWinget(buildExportArgs(exportPath), { emitOutput: false });
+      return parseWingetExportPackages(decodeWingetExportBuffer(fs.readFileSync(exportPath)));
+    } catch {
+      return [];
+    } finally {
+      try {
+        fs.rmSync(exportDir, { recursive: true, force: true });
+      } catch {
+        // Best-effort cleanup of the temp export directory.
+      }
+    }
+  }
+
   async function resolveTruncatedPackageIds(packages) {
     const resolvedPackages = [];
+    const hasTruncated = packages.some((item) => hasTruncatedMarker(item.id));
+    const exportPackages = hasTruncated ? await loadInstalledPackagesViaExport() : [];
 
     for (const item of packages) {
       if (!hasTruncatedMarker(item.id)) {
@@ -868,24 +1012,33 @@ function createWingetRunner() {
       const prefix = getTruncatedPrefix(item.id);
       events.emit('log', `잘린 패키지 ID 확인 중: ${item.id}`);
 
-      // Prefer the installed-package list: it only contains what is actually
-      // installed and carries versions to disambiguate same-prefix variants
-      // (e.g. VCRedist x64/x86) that a catalog search cannot tell apart.
-      const listResult = await runWinget(buildListByIdArgs(prefix, item.source), {
-        emitOutput: false
-      });
-      let resolvedId = listResult.ok
-        ? resolvePackageIdFromListOutput(
-            listResult.stdout,
-            prefix,
-            item.source,
-            item.installedVersion,
-            item.availableVersion
-          )
-        : null;
+      // 1) winget export: full ids as JSON, disambiguated by installed version.
+      let resolvedId = resolvePackageIdFromExport(
+        exportPackages,
+        prefix,
+        item.source,
+        item.installedVersion
+      );
 
-      // Fall back to a catalog search (matches by name) when the installed
-      // list cannot resolve it on its own.
+      // 2) Fall back to the installed-package list (table output): it only
+      // contains what is actually installed and carries versions to
+      // disambiguate same-prefix variants (e.g. VCRedist x64/x86).
+      if (!resolvedId) {
+        const listResult = await runWinget(buildListByIdArgs(prefix, item.source), {
+          emitOutput: false
+        });
+        resolvedId = listResult.ok
+          ? resolvePackageIdFromListOutput(
+              listResult.stdout,
+              prefix,
+              item.source,
+              item.installedVersion,
+              item.availableVersion
+            )
+          : null;
+      }
+
+      // 3) Fall back to a catalog search (matches by name) as a last resort.
       if (!resolvedId) {
         const searchResult = await runWinget(buildSearchArgs(prefix, item.source), {
           emitOutput: false
@@ -1001,6 +1154,7 @@ function createWingetRunner() {
 }
 
 module.exports = {
+  buildExportArgs,
   buildListArgs,
   buildListByIdArgs,
   buildSearchArgs,
@@ -1008,8 +1162,11 @@ module.exports = {
   classifyWingetFailure,
   createTerminalLogProcessor,
   createWingetRunner,
+  decodeWingetExportBuffer,
+  parseWingetExportPackages,
   parseWingetUpgradeOutput,
   parseWingetUpgradeResult,
+  resolvePackageIdFromExport,
   resolvePackageIdFromListOutput,
   resolvePackageIdFromSearchOutput,
   sanitizeWingetOutput,

@@ -342,8 +342,7 @@ export default function App() {
   const [options, setOptions] = useState({
     silent: true,
     includeUnknown: false,
-    includePinned: false,
-    allowReboot: false
+    includePinned: false
   });
 
   useEffect(() => {
@@ -393,8 +392,7 @@ export default function App() {
     () => ({
       silent: t('tooltips.silent'),
       includeUnknown: t('tooltips.includeUnknown'),
-      includePinned: t('tooltips.includePinned'),
-      allowReboot: t('tooltips.allowReboot')
+      includePinned: t('tooltips.includePinned')
     }),
     [t]
   );
@@ -804,15 +802,6 @@ export default function App() {
                 disabled={busy}
               />
               <span>{t('options.includePinned')} <em>(--include-pinned)</em></span>
-            </label>
-            <label className="check-option" data-tooltip={optionTooltips.allowReboot}>
-              <input
-                type="checkbox"
-                checked={options.allowReboot}
-                onChange={() => updateOption('allowReboot')}
-                disabled={busy}
-              />
-              <span>{t('options.allowReboot')} <em>(--allow-reboot)</em></span>
             </label>
           </section>
 
