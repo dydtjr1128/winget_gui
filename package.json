@@ -1,6 +1,6 @@
 {
   "name": "winget-gui",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "private": true,
   "description": "Electron GUI for selecting and running winget package upgrades.",
   "main": "electron/main.cjs",
@@ -42,6 +42,7 @@
     ],
     "win": {
       "icon": "build/icon.ico",
+      "requestedExecutionLevel": "requireAdministrator",
       "target": [
         {
           "target": "portable",
@@ -58,7 +59,8 @@
       ]
     },
     "portable": {
-      "artifactName": "Winget-GUI-Portable-${version}-${arch}.${ext}"
+      "artifactName": "Winget-GUI-Portable-${version}-${arch}.${ext}",
+      "requestExecutionLevel": "admin"
     },
     "nsis": {
       "artifactName": "Winget-GUI-Setup-${version}-${arch}.${ext}",

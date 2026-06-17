@@ -18,11 +18,13 @@ test('package config builds portable and installer Windows executables', () => {
   assert.equal(packageJson.build.appId, 'com.est.winget-gui');
   assert.equal(packageJson.build.productName, 'Winget GUI');
   assert.equal(packageJson.build.win.icon, 'build/icon.ico');
+  assert.equal(packageJson.build.win.requestedExecutionLevel, 'requireAdministrator');
   assert.deepEqual(packageJson.build.win.target, [
     { target: 'portable', arch: ['x64'] },
     { target: 'nsis', arch: ['x64'] }
   ]);
   assert.equal(packageJson.build.portable.artifactName, 'Winget-GUI-Portable-${version}-${arch}.${ext}');
+  assert.equal(packageJson.build.portable.requestExecutionLevel, 'admin');
   assert.equal(packageJson.build.nsis.artifactName, 'Winget-GUI-Setup-${version}-${arch}.${ext}');
   assert.equal(packageJson.build.nsis.installerIcon, 'build/icon.ico');
   assert.equal(packageJson.build.nsis.uninstallerIcon, 'build/icon.ico');
@@ -54,4 +56,11 @@ test('release workflow runs when a version tag is pushed', () => {
   assert.match(workflow, /subject-path: release\/\*\.exe/);
   assert.match(workflow, /softprops\/action-gh-release@v3/);
   assert.match(workflow, /release\/\*\.exe/);
+});
+
+test('portable packaging embeds a requireAdministrator manifest into the exe', () => {
+  const script = fs.readFileSync(path.join(root, 'scripts', 'package-portable.cjs'), 'utf8');
+
+  assert.match(script, /--set-requested-execution-level/);
+  assert.match(script, /requireAdministrator/);
 });

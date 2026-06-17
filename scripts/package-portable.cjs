@@ -1,5 +1,6 @@
 const fs = require('node:fs');
 const path = require('node:path');
+const { spawnSync } = require('node:child_process');
 
 const root = path.resolve(__dirname, '..');
 const electronDist = path.join(root, 'node_modules', 'electron', 'dist');
@@ -17,6 +18,30 @@ function assertExists(target, label) {
 
 function copyDir(name) {
   fs.cpSync(path.join(root, name), path.join(appDir, name), { recursive: true });
+}
+
+// Finds electron-builder's bundled app-builder binary, which exposes a modern
+// `rcedit` subcommand (the same tool electron-builder uses to set the execution
+// level). electron-winstaller's vendored rcedit.exe is too old to support
+// --set-requested-execution-level, so it is not used here.
+function resolveAppBuilderExe() {
+  const archDirs = [process.arch, 'x64', 'ia32', 'arm64'];
+
+  for (const arch of archDirs) {
+    const candidate = path.join(
+      root,
+      'node_modules',
+      'app-builder-bin',
+      'win',
+      arch,
+      'app-builder.exe'
+    );
+    if (fs.existsSync(candidate)) {
+      return candidate;
+    }
+  }
+
+  return null;
 }
 
 assertExists(path.join(electronDist, 'electron.exe'), 'Electron runtime');
@@ -45,6 +70,39 @@ fs.writeFileSync(
 );
 
 fs.renameSync(sourceExe, targetExe);
+
+// Embed a requireAdministrator manifest so the portable exe always launches
+// elevated (UAC at startup). This is more reliable than relaunching elevated
+// from inside the running app, which could intermittently fail to reappear.
+const appBuilderExe = resolveAppBuilderExe();
+if (!appBuilderExe) {
+  throw new Error(
+    'app-builder.exe not found under node_modules/app-builder-bin; cannot embed the administrator manifest.'
+  );
+}
+
+const rceditArgs = JSON.stringify([
+  targetExe,
+  '--set-requested-execution-level',
+  'requireAdministrator'
+]);
+const elevation = spawnSync(appBuilderExe, ['rcedit', '--args', rceditArgs], { stdio: 'inherit' });
+if (elevation.error) {
+  throw elevation.error;
+}
+if (elevation.status !== 0) {
+  throw new Error(
+    `Failed to embed requireAdministrator manifest (app-builder rcedit exit code ${elevation.status}).`
+  );
+}
+
+// Verify the manifest actually changed, so a silent no-op can never ship a
+// portable exe that quietly launches without elevation.
+if (!fs.readFileSync(targetExe).includes('requireAdministrator')) {
+  throw new Error('requireAdministrator was not embedded into the portable exe manifest.');
+}
+console.log('Embedded requireAdministrator manifest (portable exe always elevates).');
+
 fs.writeFileSync(
   path.join(portableDir, 'README.txt'),
   [
