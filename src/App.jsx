@@ -328,6 +328,7 @@ export default function App() {
   const { locale: activeLocale, t } = translator;
   const localeRef = useRef(activeLocale);
   const tRef = useRef(t);
+  const lastSelectedId = useRef(null);
   const [packages, setPackages] = useState([]);
   const [query, setQuery] = useState('');
   const [loading, setLoading] = useState(false);
@@ -598,6 +599,47 @@ export default function App() {
           : item
       )
     );
+  }
+
+  // Selects every selectable row shown between the anchor (previous click) and
+  // the shift-clicked target, inclusive — the usual file-list range behavior.
+  function selectRange(anchorId, targetId) {
+    const anchorIndex = visiblePackages.findIndex((item) => item.id === anchorId);
+    const targetIndex = visiblePackages.findIndex((item) => item.id === targetId);
+
+    if (anchorIndex === -1 || targetIndex === -1) {
+      toggleSelected(targetId);
+      return;
+    }
+
+    const [start, end] =
+      anchorIndex <= targetIndex ? [anchorIndex, targetIndex] : [targetIndex, anchorIndex];
+    const rangeIds = new Set(
+      visiblePackages
+        .slice(start, end + 1)
+        .filter(isPackageSelectable)
+        .map((item) => item.id)
+    );
+
+    setPackages((current) =>
+      current.map((item) => (rangeIds.has(item.id) ? { ...item, selected: true } : item))
+    );
+  }
+
+  function handleRowClick(event, id) {
+    if (busy) {
+      return;
+    }
+
+    if (event.shiftKey && lastSelectedId.current && lastSelectedId.current !== id) {
+      // Clear the text selection a shift-click would otherwise make.
+      window.getSelection?.()?.removeAllRanges();
+      selectRange(lastSelectedId.current, id);
+    } else {
+      toggleSelected(id);
+    }
+
+    lastSelectedId.current = id;
   }
 
   function toggleVisibleSelection() {
@@ -924,14 +966,17 @@ export default function App() {
                       item.selected ? 'selected-row' : '',
                       !isPackageSelectable(item) ? 'blocked-row' : ''
                     ].filter(Boolean).join(' ')}
-                    onClick={() => toggleSelected(item.id)}
+                    onClick={(event) => handleRowClick(event, item.id)}
                   >
                     <td className="select-column">
                       <input
                         type="checkbox"
                         checked={item.selected}
-                        onChange={() => toggleSelected(item.id)}
-                        onClick={(event) => event.stopPropagation()}
+                        readOnly
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          handleRowClick(event, item.id);
+                        }}
                         disabled={busy || !isPackageSelectable(item)}
                         aria-label={t('aria.selectPackage', { name: item.name })}
                       />
