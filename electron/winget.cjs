@@ -978,7 +978,7 @@ function safeSpawnCwd() {
   return path.join(systemRoot, 'System32');
 }
 
-function createWingetRunner() {
+function createWingetRunner({ spawn: spawnImpl = spawn } = {}) {
   const events = new EventEmitter();
   let currentProcess = null;
   let cancelled = false;
@@ -994,7 +994,7 @@ function createWingetRunner() {
       }
 
       const emitOutput = options.emitOutput !== false;
-      const child = spawn(resolveWingetCommand(), args, {
+      const child = spawnImpl(resolveWingetCommand(), args, {
         windowsHide: true,
         shell: false,
         cwd: safeSpawnCwd()
