@@ -1,6 +1,6 @@
 const path = require('node:path');
 const fs = require('node:fs');
-const { app, BrowserWindow, ipcMain } = require('electron');
+const { app, BrowserWindow, ipcMain, screen, session } = require('electron');
 const {
   getElevatedRelaunchOptions,
   isRunningElevated,
@@ -45,6 +45,66 @@ function sendToRenderer(channel, payload) {
   }
 }
 
+function windowStatePath() {
+  return path.join(app.getPath('userData'), 'window-state.json');
+}
+
+function loadWindowState() {
+  try {
+    const state = JSON.parse(fs.readFileSync(windowStatePath(), 'utf8'));
+    if (
+      Number.isFinite(state?.width) &&
+      state.width >= 1080 &&
+      Number.isFinite(state?.height) &&
+      state.height >= 720
+    ) {
+      return state;
+    }
+  } catch {
+    // No saved state or unreadable; fall back to defaults.
+  }
+  return null;
+}
+
+// Guards against restoring the window onto a display that no longer exists
+// (e.g. an unplugged monitor), which would place it off-screen.
+function isOnSomeDisplay(state) {
+  if (!Number.isFinite(state?.x) || !Number.isFinite(state?.y)) {
+    return false;
+  }
+  return screen.getAllDisplays().some((display) => {
+    const area = display.workArea;
+    return (
+      state.x < area.x + area.width &&
+      state.x + state.width > area.x &&
+      state.y < area.y + area.height &&
+      state.y + state.height > area.y
+    );
+  });
+}
+
+function saveWindowState(window) {
+  try {
+    if (!window || window.isDestroyed()) {
+      return;
+    }
+    const bounds = window.getNormalBounds();
+    fs.writeFileSync(
+      windowStatePath(),
+      JSON.stringify({
+        width: bounds.width,
+        height: bounds.height,
+        x: bounds.x,
+        y: bounds.y,
+        isMaximized: window.isMaximized()
+      }),
+      'utf8'
+    );
+  } catch {
+    // Best-effort; never block window close on a failed save.
+  }
+}
+
 function createWindow() {
   const loadDist = app.isPackaged || process.argv.includes('--dist');
   const devUrl = 'http://127.0.0.1:5317';
@@ -52,9 +112,13 @@ function createWindow() {
     ? path.join(__dirname, '..', 'dist', 'winget-gui-logo.png')
     : path.join(__dirname, '..', 'public', 'winget-gui-logo.png');
 
+  const savedState = loadWindowState();
+  const usePosition = savedState && isOnSomeDisplay(savedState);
+
   mainWindow = new BrowserWindow({
-    width: 1360,
-    height: 860,
+    width: savedState?.width ?? 1360,
+    height: savedState?.height ?? 860,
+    ...(usePosition ? { x: savedState.x, y: savedState.y } : {}),
     minWidth: 1080,
     minHeight: 720,
     icon: iconPath,
@@ -70,6 +134,11 @@ function createWindow() {
     }
   });
 
+  if (savedState?.isMaximized) {
+    mainWindow.maximize();
+  }
+
+  mainWindow.on('close', () => saveWindowState(mainWindow));
   mainWindow.on('maximize', () => sendToRenderer('window:maximized', true));
   mainWindow.on('unmaximize', () => sendToRenderer('window:maximized', false));
   mainWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
@@ -200,6 +269,21 @@ app.on('child-process-gone', (_event, details) => {
 });
 
 app.whenReady().then(() => {
+  if (app.isPackaged || process.argv.includes('--dist')) {
+    // Lock the renderer down in packaged/dist mode. Skipped in dev so the Vite
+    // HMR client and its websocket keep working.
+    session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
+      callback({
+        responseHeaders: {
+          ...details.responseHeaders,
+          'Content-Security-Policy': [
+            "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; object-src 'none'; base-uri 'none'"
+          ]
+        }
+      });
+    });
+  }
+
   createWindow();
 
   app.on('activate', () => {
