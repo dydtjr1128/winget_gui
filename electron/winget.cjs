@@ -1028,6 +1028,7 @@ function createWingetRunner() {
         resolve({
           ok: false,
           code: -1,
+          errorCode: error.code,
           stdout,
           stderr: `${stderr}${error.message}`
         });
@@ -1169,7 +1170,8 @@ function createWingetRunner() {
       ...result,
       ...parsed,
       packages,
-      parsedCount: packages.length
+      parsedCount: packages.length,
+      wingetMissing: result.errorCode === 'ENOENT'
     };
   }
 
