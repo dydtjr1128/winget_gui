@@ -12,10 +12,23 @@ const runner = createWingetRunner();
 let mainWindow = null;
 let knownPackages = new Map();
 
+const maxErrorLogBytes = 512 * 1024;
+
 function logError(label, detail) {
   try {
+    const logPath = path.join(app.getPath('userData'), 'winget-gui-error.log');
+    // Rotate to a single .old backup once the log passes the cap so it can never
+    // grow without bound over long-running use.
+    try {
+      if (fs.statSync(logPath).size > maxErrorLogBytes) {
+        fs.rmSync(`${logPath}.old`, { force: true });
+        fs.renameSync(logPath, `${logPath}.old`);
+      }
+    } catch {
+      // No existing log yet, or rotation failed; fall through and append.
+    }
     const line = `[${new Date().toISOString()}] ${label} ${detail ?? ''}\n`;
-    fs.appendFileSync(path.join(app.getPath('userData'), 'winget-gui-error.log'), line);
+    fs.appendFileSync(logPath, line);
   } catch {
     // Logging is best-effort; never let it break the app.
   }

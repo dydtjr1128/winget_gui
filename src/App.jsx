@@ -879,7 +879,7 @@ export default function App() {
               </p>
             </div>
             <div className="header-actions">
-              {running ? (
+              {running || loading ? (
                 <button className="button danger" onClick={cancelUpdates}>
                   <X size={17} />
                   {t('actions.cancel')}
