@@ -189,7 +189,8 @@ ipcMain.handle('winget:upgrade-selected', async (_event, payload) => {
   return runner.upgradeSelected(selectedPackages, {
     silent: Boolean(payload?.options?.silent),
     includeUnknown: Boolean(payload?.options?.includeUnknown),
-    includePinned: Boolean(payload?.options?.includePinned)
+    includePinned: Boolean(payload?.options?.includePinned),
+    ignoreHash: Boolean(payload?.options?.ignoreHash)
   });
 });
 

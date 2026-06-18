@@ -97,3 +97,72 @@ test('serializes winget calls — the second starts only after the first closes'
   const results = await promise;
   assert.equal(results.filter((item) => item.ok).length, 2);
 });
+
+test('ignoreHash enables InstallerHashOverride, passes the flag, then restores the setting', async () => {
+  const calls = [];
+  const fakeSpawn = (cmd, args) => {
+    calls.push(args.join(' '));
+    const child = makeFakeChild();
+    setImmediate(() => {
+      if (args[0] === 'settings' && args[1] === 'export') {
+        child.stdout.emit('data', Buffer.from('{"adminSettings":{"InstallerHashOverride":false}}'));
+      }
+      child.emit('close', 0);
+    });
+    return child;
+  };
+
+  const runner = createWingetRunner({ spawn: fakeSpawn });
+  const results = await runner.upgradeSelected([{ id: 'Foo.Bar', name: 'Foo' }], { ignoreHash: true });
+
+  assert.equal(results[0].ok, true);
+  assert.ok(calls.includes('settings export'));
+  assert.ok(calls.includes('settings --enable InstallerHashOverride'));
+  assert.ok(calls.some((c) => c.includes('upgrade') && c.includes('--ignore-security-hash')));
+  // restored afterward because we enabled it (it was off)
+  assert.ok(calls.includes('settings --disable InstallerHashOverride'));
+});
+
+test('ignoreHash does not touch the setting when it is already enabled', async () => {
+  const calls = [];
+  const fakeSpawn = (cmd, args) => {
+    calls.push(args.join(' '));
+    const child = makeFakeChild();
+    setImmediate(() => {
+      if (args[0] === 'settings' && args[1] === 'export') {
+        child.stdout.emit('data', Buffer.from('{"adminSettings":{"InstallerHashOverride":true}}'));
+      }
+      child.emit('close', 0);
+    });
+    return child;
+  };
+
+  const runner = createWingetRunner({ spawn: fakeSpawn });
+  await runner.upgradeSelected([{ id: 'Foo.Bar', name: 'Foo' }], { ignoreHash: true });
+
+  assert.ok(!calls.includes('settings --enable InstallerHashOverride'));
+  assert.ok(!calls.includes('settings --disable InstallerHashOverride'));
+  assert.ok(calls.some((c) => c.includes('--ignore-security-hash')));
+});
+
+test('ignoreHash leaves the setting untouched when winget export is unreadable', async () => {
+  const calls = [];
+  const fakeSpawn = (cmd, args) => {
+    calls.push(args.join(' '));
+    const child = makeFakeChild();
+    setImmediate(() => {
+      if (args[0] === 'settings' && args[1] === 'export') {
+        child.stdout.emit('data', Buffer.from('not json at all'));
+      }
+      child.emit('close', 0);
+    });
+    return child;
+  };
+
+  const runner = createWingetRunner({ spawn: fakeSpawn });
+  await runner.upgradeSelected([{ id: 'Foo.Bar', name: 'Foo' }], { ignoreHash: true });
+
+  // unknown prior state -> never enable, never disable (don't clobber)
+  assert.ok(!calls.includes('settings --enable InstallerHashOverride'));
+  assert.ok(!calls.includes('settings --disable InstallerHashOverride'));
+});

@@ -88,7 +88,25 @@ function buildUpgradeArgs(id, options = {}) {
     args.push('--include-pinned');
   }
 
+  if (options.ignoreHash) {
+    args.push('--ignore-security-hash');
+  }
+
   return args;
+}
+
+// Enables the admin setting that `--ignore-security-hash` is gated by. Requires
+// elevation (the app runs elevated). Changing it is a global winget setting.
+function buildEnableHashOverrideArgs() {
+  return ['settings', '--enable', 'InstallerHashOverride'];
+}
+
+function buildDisableHashOverrideArgs() {
+  return ['settings', '--disable', 'InstallerHashOverride'];
+}
+
+function buildSettingsExportArgs() {
+  return ['settings', 'export'];
 }
 
 module.exports = {
@@ -96,5 +114,8 @@ module.exports = {
   buildSearchArgs,
   buildListByIdArgs,
   buildExportArgs,
-  buildUpgradeArgs
+  buildUpgradeArgs,
+  buildEnableHashOverrideArgs,
+  buildDisableHashOverrideArgs,
+  buildSettingsExportArgs
 };

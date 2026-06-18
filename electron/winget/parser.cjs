@@ -648,6 +648,18 @@ function classifyWingetFailure(result) {
     .filter(Boolean)
     .join('\n');
 
+  // Check a hash mismatch before requires-admin: winget's hash-failure message
+  // says it can be overridden "by running as administrator", which the
+  // requires-admin patterns below would otherwise misread as an elevation error.
+  if (
+    /해시.*일치하지\s*않/.test(output) ||
+    /해시가 매니페스트와 다/.test(output) ||
+    /installer hash.*(?:does not match|mismatch)/i.test(output) ||
+    /hash.*does not match/i.test(output)
+  ) {
+    return 'hash';
+  }
+
   if (
     /Error\s+1730/i.test(output) ||
     /must be an Administrator/i.test(output) ||

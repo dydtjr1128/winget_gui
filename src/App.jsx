@@ -360,7 +360,8 @@ export default function App() {
   const [options, setOptions] = useState({
     silent: true,
     includeUnknown: false,
-    includePinned: false
+    includePinned: false,
+    ignoreHash: false
   });
   const [sort, setSort] = useState({ key: null, dir: 'asc' });
 
@@ -411,7 +412,8 @@ export default function App() {
     () => ({
       silent: t('tooltips.silent'),
       includeUnknown: t('tooltips.includeUnknown'),
-      includePinned: t('tooltips.includePinned')
+      includePinned: t('tooltips.includePinned'),
+      ignoreHash: t('tooltips.ignoreHash')
     }),
     [t]
   );
@@ -919,6 +921,15 @@ export default function App() {
                 disabled={busy}
               />
               <span>{t('options.includePinned')} <em>(--include-pinned)</em></span>
+            </label>
+            <label className="check-option" data-tooltip={optionTooltips.ignoreHash}>
+              <input
+                type="checkbox"
+                checked={options.ignoreHash}
+                onChange={() => updateOption('ignoreHash')}
+                disabled={busy}
+              />
+              <span>{t('options.ignoreHash')} <em>(--ignore-security-hash)</em></span>
             </label>
           </section>
 

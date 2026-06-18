@@ -28,7 +28,10 @@ const {
   buildListByIdArgs,
   buildSearchArgs,
   buildExportArgs,
-  buildUpgradeArgs
+  buildUpgradeArgs,
+  buildEnableHashOverrideArgs,
+  buildDisableHashOverrideArgs,
+  buildSettingsExportArgs
 } = require('./args.cjs');
 
 // Looks for the real winget binary inside the protected, admin-only-writable
@@ -111,8 +114,9 @@ function createWingetRunner({ spawn: spawnImpl = spawn } = {}) {
   function runWinget(args, options = {}) {
     const launch = () => new Promise((resolve) => {
       // A cancel can land while this call is still queued behind another winget
-      // process; do not start a new child once cancellation has been requested.
-      if (cancelled) {
+      // process; do not start a new child once cancellation has been requested
+      // (unless forced, e.g. cleanup that must run even after a cancel).
+      if (cancelled && !options.force) {
         resolve({ ok: false, code: null, stdout: '', stderr: '' });
         return;
       }
@@ -299,57 +303,117 @@ function createWingetRunner({ spawn: spawnImpl = spawn } = {}) {
     };
   }
 
+  // Reads the InstallerHashOverride admin setting as true | false | null, where
+  // null means "couldn't determine" (export failed or unparseable) — distinct
+  // from a confirmed false.
+  async function readHashOverride() {
+    try {
+      const result = await runWinget(buildSettingsExportArgs(), { emitOutput: false });
+      if (!result.ok) {
+        return null;
+      }
+      const text = String(result.stdout ?? '');
+      const value = JSON.parse(text.charCodeAt(0) === 0xfeff ? text.slice(1) : text)?.adminSettings
+        ?.InstallerHashOverride;
+      return typeof value === 'boolean' ? value : null;
+    } catch {
+      return null;
+    }
+  }
+
   async function upgradeSelected(packages, options = {}) {
     cancelled = false;
     const results = [];
 
-    for (const item of packages) {
-      if (cancelled) {
-        results.push({
-          id: item.id,
-          name: item.name,
-          ok: false,
-          code: null,
-          skipped: true
-        });
-        continue;
+    // `--ignore-security-hash` is gated by the InstallerHashOverride admin
+    // setting. Enable it only when we can confirm it is currently OFF, and
+    // restore it afterward — so we never leave it on, and never clobber a state
+    // the user already had on (or one we couldn't read).
+    let enabledHashOverride = false;
+    if (options.ignoreHash) {
+      const prior = await readHashOverride();
+      if (prior === false) {
+        const enable = await runWinget(buildEnableHashOverrideArgs(), { emitOutput: false });
+        enabledHashOverride = enable.ok;
+        if (!enable.ok) {
+          events.emit(
+            'log',
+            'InstallerHashOverride 설정을 켜지 못했습니다(관리자 권한 필요). 해시 검증 무시가 적용되지 않을 수 있습니다.'
+          );
+        }
+      } else if (prior === null) {
+        events.emit(
+          'log',
+          'winget 설정 상태를 확인하지 못해 해시 검증 무시를 안전하게 적용하지 못했습니다.'
+        );
       }
+    }
 
-      events.emit('package-start', item);
-      events.emit('log', `업데이트 시작: ${item.name || item.id}`);
-      if (hasTruncatedMarker(item.id)) {
+    try {
+      for (const item of packages) {
+        if (cancelled) {
+          results.push({
+            id: item.id,
+            name: item.name,
+            ok: false,
+            code: null,
+            skipped: true
+          });
+          continue;
+        }
+
+        events.emit('package-start', item);
+        events.emit('log', `업데이트 시작: ${item.name || item.id}`);
+        if (hasTruncatedMarker(item.id)) {
+          const itemResult = {
+            id: item.id,
+            name: item.name,
+            ok: false,
+            code: null,
+            failureKind: 'id-resolution',
+            failureDetail: `winget 목록에서 패키지 ID가 잘려 안전하게 업데이트할 수 없습니다: ${item.id}`,
+            stdout: '',
+            stderr: ''
+          };
+          results.push(itemResult);
+          events.emit('package-complete', itemResult);
+          continue;
+        }
+
+        const args = buildUpgradeArgs(item.id, options);
+        const result = await runWinget(args);
+        const failureDetail = summarizeWingetFailure(result);
         const itemResult = {
           id: item.id,
           name: item.name,
-          ok: false,
-          code: null,
-          failureKind: 'id-resolution',
-          failureDetail: `winget 목록에서 패키지 ID가 잘려 안전하게 업데이트할 수 없습니다: ${item.id}`,
-          stdout: '',
-          stderr: ''
+          ok: result.ok,
+          code: result.code,
+          failureKind: classifyWingetFailure(result),
+          failureDetail,
+          stdout: result.stdout,
+          stderr: result.stderr
         };
         results.push(itemResult);
         events.emit('package-complete', itemResult);
-        continue;
       }
-
-      const args = buildUpgradeArgs(item.id, options);
-      const result = await runWinget(args);
-      const failureDetail = summarizeWingetFailure(result);
-      const itemResult = {
-        id: item.id,
-        name: item.name,
-        ok: result.ok,
-        code: result.code,
-        failureKind: classifyWingetFailure(result),
-        failureDetail,
-        stdout: result.stdout,
-        stderr: result.stderr
-      };
-      results.push(itemResult);
-      events.emit('package-complete', itemResult);
+    } finally {
+      if (enabledHashOverride) {
+        // force: run even if the queue was cancelled, so state is always restored.
+        const restore = await runWinget(buildDisableHashOverrideArgs(), {
+          emitOutput: false,
+          force: true
+        });
+        if (!restore.ok) {
+          events.emit(
+            'log',
+            'InstallerHashOverride 설정을 원래대로 되돌리지 못했습니다. winget settings에서 수동으로 꺼 주세요.'
+          );
+        }
+      }
     }
 
+    // Emit only after the setting is restored, so a queue-complete listener that
+    // starts another ignoreHash upgrade observes the correct prior state.
     events.emit('queue-complete', results);
     return results;
   }

@@ -238,6 +238,26 @@ test('never emits --allow-reboot even when a stale allowReboot option is passed'
   assert.ok(!args.includes('--allow-reboot'));
 });
 
+test('adds --ignore-security-hash only when ignoreHash is set', () => {
+  assert.ok(!buildUpgradeArgs('Git.Git', {}).includes('--ignore-security-hash'));
+  assert.ok(buildUpgradeArgs('Git.Git', { ignoreHash: true }).includes('--ignore-security-hash'));
+});
+
+test('builds the enable-hash-override settings command', () => {
+  const { buildEnableHashOverrideArgs } = require('../electron/winget/args.cjs');
+  assert.deepEqual(buildEnableHashOverrideArgs(), ['settings', '--enable', 'InstallerHashOverride']);
+});
+
+test('classifies a hash mismatch as hash even when winget suggests running as admin', () => {
+  const kind = classifyWingetFailure({
+    ok: false,
+    code: 2,
+    stdout: '설치 관리자 해시가 일치하지 않습니다. 관리자로 실행할 경우 이 설정을 무시할 수 있습니다.',
+    stderr: ''
+  });
+  assert.equal(kind, 'hash');
+});
+
 test('builds list arguments with visibility options', () => {
   assert.deepEqual(buildListArgs({ includeUnknown: true, includePinned: true }), [
     'upgrade',
