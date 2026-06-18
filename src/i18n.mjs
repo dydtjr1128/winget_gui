@@ -67,6 +67,7 @@ const dictionaries = {
     'logs.fetchList': 'winget upgrade 목록 조회',
     'logs.listExitCode': '목록 조회 종료 코드: {code}',
     'logs.noUpdates': '업데이트 가능한 항목이 없습니다.',
+    'logs.wingetMissing': 'winget 실행 파일을 찾을 수 없습니다. 앱 설치 관리자(App Installer)를 설치하세요.',
     'logs.countMismatch': '개수 확인 필요: winget {wingetCount}개, 표 표시 {displayedCount}개',
     'logs.unknownVersions': '버전 미확인 {count}개: 옵션을 켜고 새로고침하면 포함됩니다.',
     'logs.optionsChanged': '목록 표시 옵션이 바뀌었습니다. 다시 조회합니다.',
@@ -99,6 +100,7 @@ const dictionaries = {
     'actions.cancel': '취소',
     'actions.refresh': '새로고침',
     'actions.updateSelected': '선택 업데이트',
+    'actions.retryFailed': '실패 재시도',
     'actions.restartAsAdmin': '관리자 재시작',
     'actions.elevating': '권한 요청 중',
     'actions.clear': '지우기',
@@ -115,6 +117,8 @@ const dictionaries = {
     'empty.title': '표시할 항목이 없습니다',
     'empty.loading': '목록을 불러오는 중입니다.',
     'empty.suggestion': '검색 조건을 바꾸거나 새로고침하세요.',
+    'empty.wingetMissingTitle': 'winget을 찾을 수 없습니다',
+    'empty.wingetMissingBody': 'Windows 10/11에서 Microsoft Store의 "앱 설치 관리자(App Installer)"를 설치한 뒤 새로고침하세요.',
     'log.title': '로그'
   },
   en: {
@@ -175,6 +179,7 @@ const dictionaries = {
     'logs.fetchList': 'Fetching winget upgrade list',
     'logs.listExitCode': 'List command exit code: {code}',
     'logs.noUpdates': 'No updates are available.',
+    'logs.wingetMissing': 'The winget executable was not found. Install App Installer.',
     'logs.countMismatch': 'Count check needed: winget {wingetCount}, table {displayedCount}',
     'logs.unknownVersions': '{count} unknown-version packages: enable the option and refresh to include them.',
     'logs.optionsChanged': 'List display options changed. Fetching again.',
@@ -207,6 +212,7 @@ const dictionaries = {
     'actions.cancel': 'Cancel',
     'actions.refresh': 'Refresh',
     'actions.updateSelected': 'Update Selected',
+    'actions.retryFailed': 'Retry Failed',
     'actions.restartAsAdmin': 'Restart as Admin',
     'actions.elevating': 'Requesting',
     'actions.clear': 'Clear',
@@ -223,6 +229,8 @@ const dictionaries = {
     'empty.title': 'No items to show',
     'empty.loading': 'Loading the list.',
     'empty.suggestion': 'Change the search or refresh.',
+    'empty.wingetMissingTitle': 'winget was not found',
+    'empty.wingetMissingBody': 'Install "App Installer" from the Microsoft Store on Windows 10/11, then refresh.',
     'log.title': 'Logs'
   }
 };

@@ -13,7 +13,6 @@ import {
   Search,
   Settings2,
   ShieldAlert,
-  Terminal,
   X
 } from 'lucide-react';
 import logoUrl from './assets/winget-gui-logo.png';
@@ -24,6 +23,8 @@ import {
   languagePreferences,
   resolveLocalePreference
 } from './i18n.mjs';
+import LogPanel from './LogPanel.jsx';
+import { logStore } from './logStore.mjs';
 
 const api = window.wingetApi ?? null;
 const windowApi = window.windowApi ?? {
@@ -45,9 +46,9 @@ const emptyListMeta = {
   declaredUpgradeCount: null,
   unknownVersionCount: 0,
   parsedCount: 0,
-  countMismatch: false
+  countMismatch: false,
+  wingetMissing: false
 };
-const maxLogLines = 400;
 const languagePreferenceStorageKey = 'winget-gui-language-preference';
 
 function browserLanguageSource() {
@@ -335,7 +336,6 @@ export default function App() {
   const [running, setRunning] = useState(false);
   const [elevating, setElevating] = useState(false);
   const [isElevated, setIsElevated] = useState(false);
-  const [logs, setLogs] = useState([]);
   const [lastLoadedAt, setLastLoadedAt] = useState('');
   const [listMeta, setListMeta] = useState(emptyListMeta);
   const [activeQueueTotal, setActiveQueueTotal] = useState(0);
@@ -406,15 +406,7 @@ export default function App() {
     if (!cleaned) {
       return;
     }
-    setLogs((current) => {
-      const nextLine = formatLogLine(cleaned, localeRef.current);
-
-      if (replace && current.length > 0) {
-        return [...current.slice(0, -1), nextLine];
-      }
-
-      return [...current.slice(-(maxLogLines - 1)), nextLine];
-    });
+    logStore.addEntry(formatLogLine(cleaned, localeRef.current), replace);
   }, []);
 
   const visiblePackages = useMemo(
@@ -560,13 +552,16 @@ export default function App() {
         unknownVersionCount:
           typeof result.unknownVersionCount === 'number' ? result.unknownVersionCount : 0,
         parsedCount: typeof result.parsedCount === 'number' ? result.parsedCount : nextPackages.length,
-        countMismatch: Boolean(result.countMismatch)
+        countMismatch: Boolean(result.countMismatch),
+        wingetMissing: Boolean(result.wingetMissing)
       });
       setLastLoadedAt(nowLabel(localeRef.current));
-      if (!result.ok) {
+      if (result.wingetMissing) {
+        addLog(tRef.current('logs.wingetMissing'));
+      } else if (!result.ok) {
         addLog(tRef.current('logs.listExitCode', { code: result.code }));
       }
-      if (nextPackages.length === 0) {
+      if (!result.wingetMissing && nextPackages.length === 0) {
         addLog(tRef.current('logs.noUpdates'));
       }
       if (result.countMismatch) {
@@ -674,36 +669,44 @@ export default function App() {
     }
   }
 
-  async function runSelectedUpdates() {
-    if (selectedPackages.length === 0 || busy) {
+  async function runUpdates(ids) {
+    if (ids.length === 0 || busy || !api) {
       return;
     }
 
+    const idSet = new Set(ids);
     setRunning(true);
-    setActiveQueueTotal(selectedPackages.length);
-    setActiveQueueIds(selectedPackages.map((item) => item.id));
+    setActiveQueueTotal(ids.length);
+    setActiveQueueIds(ids);
     setPackages((current) =>
       current.map((item) =>
-        item.selected ? { ...item, status: 'idle', failureKind: '', failureDetail: '' } : item
+        idSet.has(item.id) ? { ...item, status: 'idle', failureKind: '', failureDetail: '' } : item
       )
     );
-    addLog(tRef.current('logs.updateStart', { count: selectedPackages.length }));
+    addLog(tRef.current('logs.updateStart', { count: ids.length }));
 
     try {
-      await api.upgradeSelected(
-        selectedPackages.map((item) => item.id),
-        options
-      );
+      await api.upgradeSelected(ids, options);
       addLog(tRef.current('logs.updateComplete'));
-      setRunning(false);
-      setActiveQueueTotal(0);
-      setActiveQueueIds([]);
     } catch (error) {
       addLog(error.message);
+    } finally {
       setRunning(false);
       setActiveQueueTotal(0);
       setActiveQueueIds([]);
     }
+  }
+
+  function runSelectedUpdates() {
+    runUpdates(selectedPackages.map((item) => item.id));
+  }
+
+  function retryFailed() {
+    runUpdates(
+      packages
+        .filter((item) => item.status === 'failed' && isPackageSelectable(item))
+        .map((item) => item.id)
+    );
   }
 
   async function cancelUpdates() {
@@ -897,6 +900,12 @@ export default function App() {
                   {elevating ? t('actions.elevating') : t('actions.restartAsAdmin')}
                 </button>
               ) : null}
+              {failedCount > 0 && !busy ? (
+                <button className="button secondary" onClick={retryFailed}>
+                  <RefreshCw size={17} />
+                  {t('actions.retryFailed')}
+                </button>
+              ) : null}
               <button
                 className="button primary"
                 onClick={runSelectedUpdates}
@@ -1010,25 +1019,24 @@ export default function App() {
 
             {visiblePackages.length === 0 ? (
               <div className="empty-state">
-                <CheckCircle2 size={30} />
-                <strong>{t('empty.title')}</strong>
-                <span>{loading ? t('empty.loading') : t('empty.suggestion')}</span>
+                {listMeta.wingetMissing ? (
+                  <>
+                    <CircleAlert size={30} />
+                    <strong>{t('empty.wingetMissingTitle')}</strong>
+                    <span>{t('empty.wingetMissingBody')}</span>
+                  </>
+                ) : (
+                  <>
+                    <CheckCircle2 size={30} />
+                    <strong>{t('empty.title')}</strong>
+                    <span>{loading ? t('empty.loading') : t('empty.suggestion')}</span>
+                  </>
+                )}
               </div>
             ) : null}
           </section>
 
-          <section className="log-panel" id="logs" aria-label={t('aria.logs')}>
-            <div className="log-header">
-              <div>
-                <Terminal size={16} />
-                <span>{t('log.title')}</span>
-              </div>
-              <button className="text-button" onClick={() => setLogs([])}>
-                {t('actions.clear')}
-              </button>
-            </div>
-            <pre>{logs.length > 0 ? logs.join('\n') : t('logs.empty')}</pre>
-          </section>
+          <LogPanel t={t} />
         </main>
       </div>
     </div>
