@@ -318,6 +318,22 @@ function NativeOnlyScreen({ t }) {
   );
 }
 
+function SortableHeader({ label, sortKey, sort, onSort }) {
+  const active = sort.key === sortKey;
+  const indicator = active ? (sort.dir === 'asc' ? ' ▲' : ' ▼') : '';
+  return (
+    <th
+      className="sortable-header"
+      aria-sort={active ? (sort.dir === 'asc' ? 'ascending' : 'descending') : 'none'}
+      onClick={() => onSort(sortKey)}
+      style={{ cursor: 'pointer', userSelect: 'none' }}
+    >
+      {label}
+      {indicator}
+    </th>
+  );
+}
+
 export default function App() {
   const [languagePreference, setLanguagePreference] = useState(readStoredLanguagePreference);
   const [systemLanguages, setSystemLanguages] = useState(browserLanguageSource);
@@ -330,6 +346,7 @@ export default function App() {
   const localeRef = useRef(activeLocale);
   const tRef = useRef(t);
   const lastSelectedId = useRef(null);
+  const shortcutsRef = useRef({});
   const [packages, setPackages] = useState([]);
   const [query, setQuery] = useState('');
   const [loading, setLoading] = useState(false);
@@ -345,6 +362,7 @@ export default function App() {
     includeUnknown: false,
     includePinned: false
   });
+  const [sort, setSort] = useState({ key: null, dir: 'asc' });
 
   useEffect(() => {
     localeRef.current = activeLocale;
@@ -409,6 +427,31 @@ export default function App() {
     logStore.addEntry(formatLogLine(cleaned, localeRef.current), replace);
   }, []);
 
+  useEffect(() => {
+    shortcutsRef.current = { refreshList, selectAllVisible };
+  });
+
+  useEffect(() => {
+    function onKeyDown(event) {
+      if (event.key === 'F5') {
+        event.preventDefault();
+        shortcutsRef.current.refreshList?.();
+        return;
+      }
+
+      if ((event.ctrlKey || event.metaKey) && (event.key === 'a' || event.key === 'A')) {
+        const tag = event.target?.tagName;
+        if (tag !== 'INPUT' && tag !== 'TEXTAREA') {
+          event.preventDefault();
+          shortcutsRef.current.selectAllVisible?.();
+        }
+      }
+    }
+
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, []);
+
   const visiblePackages = useMemo(
     () => packages.filter((item) => matchesPackage(item, query)),
     [packages, query]
@@ -422,6 +465,17 @@ export default function App() {
     () => visiblePackages.filter((item) => isPackageSelectable(item)),
     [visiblePackages]
   );
+  const sortedVisiblePackages = useMemo(() => {
+    if (!sort.key) {
+      return visiblePackages;
+    }
+    const factor = sort.dir === 'asc' ? 1 : -1;
+    return [...visiblePackages].sort((a, b) => {
+      const left = String(a[sort.key] ?? '');
+      const right = String(b[sort.key] ?? '');
+      return factor * left.localeCompare(right, undefined, { numeric: true, sensitivity: 'base' });
+    });
+  }, [visiblePackages, sort]);
   const allVisibleSelected =
     selectableVisiblePackages.length > 0 &&
     selectableVisiblePackages.every((item) => item.selected);
@@ -599,8 +653,8 @@ export default function App() {
   // Selects every selectable row shown between the anchor (previous click) and
   // the shift-clicked target, inclusive — the usual file-list range behavior.
   function selectRange(anchorId, targetId) {
-    const anchorIndex = visiblePackages.findIndex((item) => item.id === anchorId);
-    const targetIndex = visiblePackages.findIndex((item) => item.id === targetId);
+    const anchorIndex = sortedVisiblePackages.findIndex((item) => item.id === anchorId);
+    const targetIndex = sortedVisiblePackages.findIndex((item) => item.id === targetId);
 
     if (anchorIndex === -1 || targetIndex === -1) {
       toggleSelected(targetId);
@@ -610,7 +664,7 @@ export default function App() {
     const [start, end] =
       anchorIndex <= targetIndex ? [anchorIndex, targetIndex] : [targetIndex, anchorIndex];
     const rangeIds = new Set(
-      visiblePackages
+      sortedVisiblePackages
         .slice(start, end + 1)
         .filter(isPackageSelectable)
         .map((item) => item.id)
@@ -646,6 +700,24 @@ export default function App() {
       current.map((item) =>
         visibleIds.has(item.id) ? { ...item, selected: !allVisibleSelected } : item
       )
+    );
+  }
+
+  function selectAllVisible() {
+    if (busy) {
+      return;
+    }
+    const visibleIds = new Set(selectableVisiblePackages.map((item) => item.id));
+    setPackages((current) =>
+      current.map((item) => (visibleIds.has(item.id) ? { ...item, selected: true } : item))
+    );
+  }
+
+  function toggleSort(key) {
+    setSort((current) =>
+      current.key === key
+        ? { key, dir: current.dir === 'asc' ? 'desc' : 'asc' }
+        : { key, dir: 'asc' }
     );
   }
 
@@ -959,16 +1031,16 @@ export default function App() {
                       t={t}
                     />
                   </th>
-                  <th>{t('table.app')}</th>
-                  <th>{t('table.packageId')}</th>
-                  <th>{t('table.current')}</th>
-                  <th>{t('table.update')}</th>
-                  <th>{t('table.source')}</th>
+                  <SortableHeader label={t('table.app')} sortKey="name" sort={sort} onSort={toggleSort} />
+                  <SortableHeader label={t('table.packageId')} sortKey="id" sort={sort} onSort={toggleSort} />
+                  <SortableHeader label={t('table.current')} sortKey="installedVersion" sort={sort} onSort={toggleSort} />
+                  <SortableHeader label={t('table.update')} sortKey="availableVersion" sort={sort} onSort={toggleSort} />
+                  <SortableHeader label={t('table.source')} sortKey="source" sort={sort} onSort={toggleSort} />
                   <th>{t('table.status')}</th>
                 </tr>
               </thead>
               <tbody>
-                {visiblePackages.map((item) => (
+                {sortedVisiblePackages.map((item) => (
                   <tr
                     key={item.id}
                     className={[
