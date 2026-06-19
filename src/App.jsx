@@ -329,7 +329,6 @@ function SortableHeader({ label, sortKey, sort, onSort }) {
       className="sortable-header"
       aria-sort={active ? (sort.dir === 'asc' ? 'ascending' : 'descending') : 'none'}
       onClick={() => onSort(sortKey)}
-      style={{ cursor: 'pointer', userSelect: 'none' }}
     >
       {label}
       {indicator}

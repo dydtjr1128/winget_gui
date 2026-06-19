@@ -733,6 +733,22 @@ th {
   text-align: left;
 }
 
+th.sortable-header {
+  cursor: pointer;
+  user-select: none;
+  transition: color 0.12s ease;
+}
+
+th.sortable-header:hover {
+  color: var(--ink);
+}
+
+th.sortable-header[aria-sort='ascending'],
+th.sortable-header[aria-sort='descending'] {
+  color: var(--ink);
+  font-weight: 600;
+}
+
 td {
   height: 42px;
   padding: 0 9px;
@@ -944,9 +960,8 @@ td:nth-child(7) {
   height: 15px;
 }
 
-.status-icon.success,
-.status-icon.failed {
-  color: var(--primary);
+.status-icon.success {
+  color: #16a34a;
 }
 
 .status-icon.failed,
