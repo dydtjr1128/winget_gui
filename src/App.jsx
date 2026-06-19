@@ -683,13 +683,16 @@ export default function App() {
     }
 
     if (event.shiftKey && lastSelectedId.current && lastSelectedId.current !== id) {
-      // Clear the text selection a shift-click would otherwise make.
+      // Shift-click selects from the anchor (the last plain click) to here, and
+      // leaves the anchor fixed — so repeated shift-clicks keep extending the
+      // range from that same point, like a file list.
       window.getSelection?.()?.removeAllRanges();
       selectRange(lastSelectedId.current, id);
-    } else {
-      toggleSelected(id);
+      return;
     }
 
+    // A plain click toggles this row and becomes the new anchor.
+    toggleSelected(id);
     lastSelectedId.current = id;
   }
 
