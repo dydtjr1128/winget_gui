@@ -119,7 +119,10 @@ function statusLabel(status, t) {
 }
 
 function isPackageSelectable(item) {
-  return item.idResolutionStatus !== 'unresolved';
+  // A completed (success) upgrade is no longer a valid target — re-running it
+  // just makes winget report "no applicable upgrade". It drops off the list on
+  // the next refresh anyway. Failed items stay selectable so they can be retried.
+  return item.idResolutionStatus !== 'unresolved' && item.status !== 'success';
 }
 
 function failureKindFor(item) {
@@ -1060,7 +1063,7 @@ export default function App() {
                     key={item.id}
                     className={[
                       item.selected ? 'selected-row' : '',
-                      !isPackageSelectable(item) ? 'blocked-row' : '',
+                      item.idResolutionStatus === 'unresolved' ? 'blocked-row' : '',
                       item.status === 'success' ? 'row-success' : '',
                       item.status === 'failed' ? 'row-failed' : ''
                     ].filter(Boolean).join(' ')}
