@@ -986,7 +986,7 @@ export default function App() {
               {failedCount > 0 && !busy ? (
                 <button className="button secondary" onClick={retryFailed}>
                   <RefreshCw size={17} />
-                  {t('actions.retryFailed')}
+                  {t('actions.retryFailed')} ({failedCount})
                 </button>
               ) : null}
               <button
@@ -996,6 +996,7 @@ export default function App() {
               >
                 <Download size={17} />
                 {t('actions.updateSelected')}
+                {selectedPackages.length > 0 ? ` (${selectedPackages.length})` : ''}
               </button>
             </div>
           </section>
@@ -1056,7 +1057,9 @@ export default function App() {
                     key={item.id}
                     className={[
                       item.selected ? 'selected-row' : '',
-                      !isPackageSelectable(item) ? 'blocked-row' : ''
+                      !isPackageSelectable(item) ? 'blocked-row' : '',
+                      item.status === 'success' ? 'row-success' : '',
+                      item.status === 'failed' ? 'row-failed' : ''
                     ].filter(Boolean).join(' ')}
                     onClick={(event) => handleRowClick(event, item.id)}
                   >
@@ -1076,7 +1079,7 @@ export default function App() {
                     <td>
                       <div className="package-cell">
                         <span className="package-avatar">{packageInitial(item.name)}</span>
-                        <span className="app-name">{item.name}</span>
+                        <span className="app-name" title={item.name}>{item.name}</span>
                       </div>
                     </td>
                     <td

@@ -771,6 +771,19 @@ tbody tr.blocked-row:hover {
   background: var(--canvas);
 }
 
+/* Completed rows stay visible after their checkbox clears, so it's obvious what
+   was processed: success = green tint, failure = red tint, both with a left
+   accent. (Distinct from the blue selected-row tint.) */
+tbody tr.row-success {
+  background: rgba(22, 163, 74, 0.1);
+  box-shadow: inset 3px 0 0 #16a34a;
+}
+
+tbody tr.row-failed {
+  background: rgba(180, 35, 24, 0.08);
+  box-shadow: inset 3px 0 0 #b42318;
+}
+
 th:nth-child(2),
 td:nth-child(2) {
   width: 25%;
