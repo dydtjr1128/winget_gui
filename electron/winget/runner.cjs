@@ -29,6 +29,7 @@ const {
   buildSearchArgs,
   buildExportArgs,
   buildUpgradeArgs,
+  buildUninstallArgs,
   buildEnableHashOverrideArgs,
   buildDisableHashOverrideArgs,
   buildSettingsExportArgs
@@ -355,6 +356,7 @@ function createWingetRunner({ spawn: spawnImpl = spawn } = {}) {
           results.push({
             id: item.id,
             name: item.name,
+            operation: 'upgrade',
             ok: false,
             code: null,
             skipped: true
@@ -362,12 +364,13 @@ function createWingetRunner({ spawn: spawnImpl = spawn } = {}) {
           continue;
         }
 
-        events.emit('package-start', item);
+        events.emit('package-start', { ...item, operation: 'upgrade' });
         events.emit('log', `업데이트 시작: ${item.name || item.id}`);
         if (hasTruncatedMarker(item.id)) {
           const itemResult = {
             id: item.id,
             name: item.name,
+            operation: 'upgrade',
             ok: false,
             code: null,
             failureKind: 'id-resolution',
@@ -386,6 +389,7 @@ function createWingetRunner({ spawn: spawnImpl = spawn } = {}) {
         const itemResult = {
           id: item.id,
           name: item.name,
+          operation: 'upgrade',
           ok: result.ok,
           code: result.code,
           failureKind: classifyWingetFailure(result),
@@ -418,6 +422,68 @@ function createWingetRunner({ spawn: spawnImpl = spawn } = {}) {
     return results;
   }
 
+  async function uninstallSelected(packages, options = {}) {
+    cancelled = false;
+    const results = [];
+
+    for (const item of packages) {
+      if (cancelled) {
+        results.push({
+          id: item.id,
+          name: item.name,
+          operation: 'uninstall',
+          ok: false,
+          code: null,
+          skipped: true
+        });
+        continue;
+      }
+
+      events.emit('package-start', { ...item, operation: 'uninstall' });
+      events.emit('log', `삭제 시작: ${item.name || item.id}`);
+
+      if (hasTruncatedMarker(item.id)) {
+        const itemResult = {
+          id: item.id,
+          name: item.name,
+          operation: 'uninstall',
+          ok: false,
+          code: null,
+          failureKind: 'id-resolution',
+          failureDetail: `winget 목록에서 패키지 ID가 잘려 안전하게 삭제할 수 없습니다: ${item.id}`,
+          stdout: '',
+          stderr: ''
+        };
+        results.push(itemResult);
+        events.emit('package-complete', itemResult);
+        continue;
+      }
+
+      const result = await runWinget(
+        buildUninstallArgs(item.id, {
+          source: item.source,
+          silent: Boolean(options.silent)
+        })
+      );
+      const itemResult = {
+        id: item.id,
+        name: item.name,
+        operation: 'uninstall',
+        ok: result.ok,
+        code: result.code,
+        failureKind: classifyWingetFailure(result),
+        failureDetail: summarizeWingetFailure(result),
+        stdout: result.stdout,
+        stderr: result.stderr
+      };
+      results.push(itemResult);
+      events.emit('package-complete', itemResult);
+    }
+
+    events.emit('queue-complete', results);
+    return results;
+  }
+
   function cancel() {
     cancelled = true;
     if (currentProcess) {
@@ -429,6 +495,7 @@ function createWingetRunner({ spawn: spawnImpl = spawn } = {}) {
     events,
     listUpgrades,
     upgradeSelected,
+    uninstallSelected,
     cancel
   };
 }

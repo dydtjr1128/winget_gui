@@ -13,6 +13,7 @@ import {
   Search,
   Settings2,
   ShieldAlert,
+  Trash2,
   X
 } from 'lucide-react';
 import logoUrl from './assets/winget-gui-logo.png';
@@ -137,13 +138,29 @@ function failureAdviceFor(kind, t) {
   return t(`failure.advice.${kind || 'generic'}`);
 }
 
+function failureLabelFor(item, t) {
+  if (item.lastAction === 'uninstall') {
+    return t('failure.kind.uninstall');
+  }
+
+  return failureKindLabel(failureKindFor(item), t);
+}
+
+function failureAdviceForItem(item, t) {
+  if (item.lastAction === 'uninstall') {
+    return t('failure.advice.uninstall');
+  }
+
+  return failureAdviceFor(failureKindFor(item), t);
+}
+
 function statusTextFor(item, t) {
   if (item.idResolutionStatus === 'unresolved') {
     return t('status.needsAttention');
   }
 
   if (item.status === 'failed') {
-    return failureKindLabel(failureKindFor(item), t);
+    return failureLabelFor(item, t);
   }
 
   return statusLabel(item.status, t);
@@ -160,9 +177,9 @@ function statusDetailFor(item, t) {
 
   const kind = failureKindFor(item);
   const detail = String(item.failureDetail ?? '').trim();
-  const advice = failureAdviceFor(kind, t);
+  const advice = failureAdviceForItem(item, t);
 
-  return [failureKindLabel(kind, t), detail, advice].filter(Boolean).join('\n');
+  return [failureLabelFor(item, t), detail, advice].filter(Boolean).join('\n');
 }
 
 function statusClassNameFor(item, detail) {
@@ -352,7 +369,8 @@ export default function App() {
   const [packages, setPackages] = useState([]);
   const [query, setQuery] = useState('');
   const [loading, setLoading] = useState(false);
-  const [running, setRunning] = useState(false);
+  const [activeOperation, setActiveOperation] = useState(null);
+  const [uninstallTarget, setUninstallTarget] = useState([]);
   const [elevating, setElevating] = useState(false);
   const [isElevated, setIsElevated] = useState(false);
   const [lastLoadedAt, setLastLoadedAt] = useState('');
@@ -486,6 +504,12 @@ export default function App() {
   const someVisibleSelected = selectableVisiblePackages.some((item) => item.selected);
   const finishedCount = packages.filter((item) => item.status === 'success').length;
   const failedCount = packages.filter((item) => item.status === 'failed').length;
+  const failedUpdates = packages.filter(
+    (item) => item.status === 'failed' && item.lastAction !== 'uninstall'
+  );
+  const failedUninstalls = packages.filter(
+    (item) => item.status === 'failed' && item.lastAction === 'uninstall'
+  );
   const pendingCount = Math.max(packages.length - finishedCount - failedCount, 0);
   const wingetCount = listMeta.declaredUpgradeCount ?? packages.length;
   const unknownVersionCount = listMeta.unknownVersionCount ?? 0;
@@ -496,12 +520,15 @@ export default function App() {
   ).length;
   const queueProgress =
     activeQueueTotal > 0 ? Math.round((activeQueueCompleted / activeQueueTotal) * 100) : null;
+  const running = Boolean(activeOperation);
   const busy = loading || running || elevating;
   const progressActive = loading || running || elevating;
   const progressLabel = elevating
     ? t('progress.elevating')
     : running
-      ? t('progress.updating')
+      ? activeOperation === 'uninstall'
+        ? t('progress.uninstalling')
+        : t('progress.updating')
       : t('progress.syncing');
   const requiresAdminFailure = packages.some(
     (item) => item.status === 'failed' && failureKindFor(item) === 'requires-admin'
@@ -518,7 +545,7 @@ export default function App() {
     }
 
     const counts = failedPackages.reduce((accumulator, item) => {
-      const kind = failureKindFor(item);
+      const kind = item.lastAction === 'uninstall' ? 'uninstall' : failureKindFor(item);
       accumulator[kind] = (accumulator[kind] ?? 0) + 1;
       return accumulator;
     }, {});
@@ -540,7 +567,13 @@ export default function App() {
         setPackages((current) =>
           current.map((pkg) =>
             pkg.id === item.id
-              ? { ...pkg, status: 'running', failureKind: '', failureDetail: '' }
+              ? {
+                  ...pkg,
+                  status: 'running',
+                  lastAction: item.operation || activeOperation || 'upgrade',
+                  failureKind: '',
+                  failureDetail: ''
+                }
               : pkg
           )
         );
@@ -553,6 +586,7 @@ export default function App() {
                   ...pkg,
                   selected: false,
                   status: result.ok ? 'success' : 'failed',
+                  lastAction: result.operation || pkg.lastAction || 'upgrade',
                   failureKind: result.ok ? '' : result.failureKind || 'generic',
                   failureDetail: result.ok ? '' : String(result.failureDetail ?? '').trim()
                 }
@@ -560,8 +594,16 @@ export default function App() {
           )
         );
       }),
-      api.onQueueComplete(() => {
-        setRunning(false);
+      api.onQueueComplete((results) => {
+        const removedIds = new Set(
+          (Array.isArray(results) ? results : [])
+            .filter((result) => result.operation === 'uninstall' && result.ok)
+            .map((result) => result.id)
+        );
+        if (removedIds.size > 0) {
+          setPackages((current) => current.filter((pkg) => !removedIds.has(pkg.id)));
+        }
+        setActiveOperation(null);
         setActiveQueueTotal(0);
         setActiveQueueIds([]);
       })
@@ -580,8 +622,8 @@ export default function App() {
     refreshList();
   }, [options.includeUnknown, options.includePinned]);
 
-  async function refreshList() {
-    if (busy || !api) {
+  async function refreshList({ force = false } = {}) {
+    if ((!force && busy) || !api) {
       return;
     }
 
@@ -598,6 +640,7 @@ export default function App() {
           ...item,
           selected: false,
           status: 'idle',
+          lastAction: '',
           failureKind: '',
           failureDetail: ''
         }))
@@ -754,12 +797,14 @@ export default function App() {
     }
 
     const idSet = new Set(ids);
-    setRunning(true);
+    setActiveOperation('upgrade');
     setActiveQueueTotal(ids.length);
     setActiveQueueIds(ids);
     setPackages((current) =>
       current.map((item) =>
-        idSet.has(item.id) ? { ...item, status: 'idle', failureKind: '', failureDetail: '' } : item
+        idSet.has(item.id)
+          ? { ...item, status: 'idle', lastAction: 'upgrade', failureKind: '', failureDetail: '' }
+          : item
       )
     );
     addLog(tRef.current('logs.updateStart', { count: ids.length }));
@@ -770,7 +815,7 @@ export default function App() {
     } catch (error) {
       addLog(error.message);
     } finally {
-      setRunning(false);
+      setActiveOperation(null);
       setActiveQueueTotal(0);
       setActiveQueueIds([]);
     }
@@ -780,18 +825,71 @@ export default function App() {
     runUpdates(selectedPackages.map((item) => item.id));
   }
 
-  function retryFailed() {
+  function retryFailedUpdates() {
     runUpdates(
-      packages
-        .filter((item) => item.status === 'failed' && isPackageSelectable(item))
+      failedUpdates
+        .filter(isPackageSelectable)
         .map((item) => item.id)
     );
+  }
+
+  async function runUninstalls(ids) {
+    if (ids.length === 0 || busy || !api) {
+      return;
+    }
+
+    const idSet = new Set(ids);
+    setActiveOperation('uninstall');
+    setActiveQueueTotal(ids.length);
+    setActiveQueueIds(ids);
+    setPackages((current) =>
+      current.map((item) =>
+        idSet.has(item.id)
+          ? { ...item, status: 'idle', lastAction: 'uninstall', failureKind: '', failureDetail: '' }
+          : item
+      )
+    );
+    addLog(tRef.current('logs.uninstallStart', { count: ids.length }));
+
+    try {
+      const results = await api.uninstallSelected(ids, { silent: options.silent });
+      addLog(tRef.current('logs.uninstallComplete'));
+      if (Array.isArray(results) && results.length > 0 && results.every((result) => result.ok)) {
+        await refreshList({ force: true });
+      }
+    } catch (error) {
+      addLog(error.message);
+    } finally {
+      setActiveOperation(null);
+      setActiveQueueTotal(0);
+      setActiveQueueIds([]);
+    }
+  }
+
+  function requestUninstall() {
+    if (selectedPackages.length === 0 || busy) {
+      return;
+    }
+
+    setUninstallTarget(
+      selectedPackages.map(({ id, name }) => ({ id, name }))
+    );
+  }
+
+  function confirmUninstall() {
+    const ids = uninstallTarget.map((item) => item.id);
+    setUninstallTarget([]);
+    runUninstalls(ids);
+  }
+
+  function retryFailedUninstalls() {
+    setUninstallTarget(failedUninstalls.map(({ id, name }) => ({ id, name })));
   }
 
   async function cancelUpdates() {
     await api.cancelUpgrade();
     addLog(tRef.current('logs.cancelRequested'));
-    setRunning(false);
+    setActiveOperation(null);
     setActiveQueueTotal(0);
     setActiveQueueIds([]);
   }
@@ -988,12 +1086,27 @@ export default function App() {
                   {elevating ? t('actions.elevating') : t('actions.restartAsAdmin')}
                 </button>
               ) : null}
-              {failedCount > 0 && !busy ? (
-                <button className="button secondary" onClick={retryFailed}>
+              {failedUpdates.length > 0 && !busy ? (
+                <button className="button secondary" onClick={retryFailedUpdates}>
                   <RefreshCw size={17} />
-                  {t('actions.retryFailed')} ({failedCount})
+                  {t('actions.retryFailed')} ({failedUpdates.length})
                 </button>
               ) : null}
+              {failedUninstalls.length > 0 && !busy ? (
+                <button className="button secondary" onClick={retryFailedUninstalls}>
+                  <RefreshCw size={17} />
+                  {t('actions.retryFailedUninstall')} ({failedUninstalls.length})
+                </button>
+              ) : null}
+              <button
+                className="button uninstall-trigger"
+                onClick={requestUninstall}
+                disabled={selectedPackages.length === 0 || busy}
+              >
+                <Trash2 size={17} />
+                {t('actions.uninstallSelected')}
+                {selectedPackages.length > 0 ? ` (${selectedPackages.length})` : ''}
+              </button>
               <button
                 className="button primary"
                 onClick={runSelectedUpdates}
@@ -1130,6 +1243,62 @@ export default function App() {
           <LogPanel t={t} />
         </main>
       </div>
+
+      {uninstallTarget.length > 0 ? (
+        <div
+          className="dialog-backdrop"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) {
+              setUninstallTarget([]);
+            }
+          }}
+        >
+          <section
+            className="uninstall-dialog"
+            role="alertdialog"
+            aria-modal="true"
+            aria-labelledby="uninstall-dialog-title"
+            aria-describedby="uninstall-dialog-description"
+          >
+            <div className="uninstall-dialog-icon" aria-hidden="true">
+              <Trash2 size={23} />
+            </div>
+            <div className="uninstall-dialog-copy">
+              <span className="dialog-kicker">{t('uninstall.kicker')}</span>
+              <h2 id="uninstall-dialog-title">
+                {t('uninstall.title', { count: uninstallTarget.length })}
+              </h2>
+              <p id="uninstall-dialog-description">{t('uninstall.description')}</p>
+            </div>
+            <ul className="uninstall-list">
+              {uninstallTarget.slice(0, 4).map((item) => (
+                <li key={item.id}>
+                  <span>{item.name || item.id}</span>
+                  <code>{item.id}</code>
+                </li>
+              ))}
+              {uninstallTarget.length > 4 ? (
+                <li className="uninstall-list-more">
+                  {t('uninstall.more', { count: uninstallTarget.length - 4 })}
+                </li>
+              ) : null}
+            </ul>
+            <div className="uninstall-warning">
+              <CircleAlert size={17} />
+              <span>{t('uninstall.warning')}</span>
+            </div>
+            <div className="dialog-actions">
+              <button className="button secondary" onClick={() => setUninstallTarget([])}>
+                {t('actions.keep')}
+              </button>
+              <button className="button destructive" onClick={confirmUninstall} autoFocus>
+                <Trash2 size={17} />
+                {t('actions.confirmUninstall', { count: uninstallTarget.length })}
+              </button>
+            </div>
+          </section>
+        </div>
+      ) : null}
     </div>
   );
 }

@@ -438,6 +438,8 @@ button {
 
 .header-actions {
   gap: 10px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
   flex-shrink: 0;
 }
 
@@ -495,6 +497,185 @@ button {
   color: #7a2e0e;
   border-color: rgba(180, 83, 9, 0.22);
   background: rgba(251, 146, 60, 0.13);
+}
+
+.button.uninstall-trigger {
+  color: #a82218;
+  border-color: rgba(180, 35, 24, 0.2);
+  background: #ffffff;
+  box-shadow: inset 0 0 0 2px rgba(180, 35, 24, 0.06);
+}
+
+.button.uninstall-trigger:hover:not(:disabled) {
+  border-color: rgba(180, 35, 24, 0.36);
+  background: #fff7f6;
+}
+
+.button.destructive {
+  color: #ffffff;
+  background: #b42318;
+  box-shadow: 0 8px 20px rgba(180, 35, 24, 0.22);
+}
+
+.button.destructive:hover:not(:disabled) {
+  background: #981b12;
+}
+
+.dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: grid;
+  place-items: center;
+  padding: 28px;
+  background: rgba(17, 17, 19, 0.48);
+  backdrop-filter: blur(10px) saturate(82%);
+  animation: dialog-backdrop-in 0.16s ease-out both;
+}
+
+.uninstall-dialog {
+  display: grid;
+  grid-template-columns: 48px minmax(0, 1fr);
+  gap: 18px 16px;
+  width: min(520px, 100%);
+  padding: 24px;
+  overflow: hidden;
+  color: var(--ink);
+  border: 1px solid rgba(255, 255, 255, 0.78);
+  border-radius: 24px;
+  background: rgba(255, 255, 255, 0.97);
+  box-shadow:
+    0 28px 80px rgba(0, 0, 0, 0.3),
+    0 2px 8px rgba(0, 0, 0, 0.1);
+  animation: dialog-in 0.2s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.uninstall-dialog-icon {
+  display: grid;
+  width: 48px;
+  height: 48px;
+  place-items: center;
+  color: #b42318;
+  border: 1px solid rgba(180, 35, 24, 0.12);
+  border-radius: 16px;
+  background: #fff0ee;
+}
+
+.uninstall-dialog-copy {
+  min-width: 0;
+}
+
+.dialog-kicker {
+  display: block;
+  margin-bottom: 3px;
+  color: #b42318;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.uninstall-dialog h2,
+.uninstall-dialog p {
+  margin: 0;
+}
+
+.uninstall-dialog h2 {
+  font-family: var(--font-display);
+  font-size: 23px;
+  font-weight: 650;
+  line-height: 1.2;
+  letter-spacing: -0.4px;
+}
+
+.uninstall-dialog p {
+  margin-top: 7px;
+  color: var(--body-muted);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.uninstall-list {
+  grid-column: 1 / -1;
+  display: grid;
+  gap: 1px;
+  max-height: 196px;
+  margin: 0;
+  padding: 6px;
+  overflow: auto;
+  border: 1px solid var(--hairline);
+  border-radius: 14px;
+  background: var(--canvas-parchment);
+  list-style: none;
+}
+
+.uninstall-list li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 14px;
+  min-height: 42px;
+  padding: 7px 10px;
+  border-radius: 9px;
+}
+
+.uninstall-list li + li {
+  border-top: 1px solid rgba(0, 0, 0, 0.05);
+}
+
+.uninstall-list span {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 14px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.uninstall-list code {
+  max-width: 210px;
+  overflow: hidden;
+  color: var(--body-muted);
+  font-family: "SF Mono", "Cascadia Mono", Consolas, monospace;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.uninstall-list .uninstall-list-more {
+  display: block;
+  min-height: 34px;
+  padding: 8px 10px;
+  color: var(--body-muted);
+  font-size: 12px;
+  text-align: center;
+}
+
+.uninstall-warning {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 10px 12px;
+  color: #7a2e0e;
+  border: 1px solid rgba(180, 83, 9, 0.18);
+  border-radius: 12px;
+  background: rgba(251, 146, 60, 0.1);
+  font-size: 12px;
+  line-height: 1.42;
+}
+
+.uninstall-warning svg {
+  flex: 0 0 auto;
+  margin-top: 1px;
+  color: #b45309;
+}
+
+.dialog-actions {
+  grid-column: 1 / -1;
+  display: flex;
+  justify-content: flex-end;
+  gap: 9px;
 }
 
 .command-strip .button {
@@ -1181,6 +1362,19 @@ td:nth-child(7) {
   }
 }
 
+@keyframes dialog-backdrop-in {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes dialog-in {
+  from {
+    opacity: 0;
+    transform: translateY(12px) scale(0.97);
+  }
+}
+
 @media (max-width: 1180px) {
   .app-shell {
     grid-template-columns: 206px minmax(0, 1fr);
@@ -1240,5 +1434,12 @@ td:nth-child(7) {
 
   .button {
     min-height: 44px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dialog-backdrop,
+  .uninstall-dialog {
+    animation: none;
   }
 }

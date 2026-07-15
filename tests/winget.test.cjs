@@ -6,6 +6,7 @@ const {
   buildListArgs,
   buildListByIdArgs,
   buildSearchArgs,
+  buildUninstallArgs,
   buildUpgradeArgs,
   classifyWingetFailure,
   createTerminalLogProcessor,
@@ -231,6 +232,35 @@ test('builds safe exact-id upgrade arguments', () => {
     '--include-unknown',
     '--include-pinned'
   ]);
+});
+
+test('builds safe exact-id uninstall arguments with source and silent mode', () => {
+  assert.deepEqual(buildUninstallArgs('Git.Git', {
+    source: 'winget',
+    silent: true
+  }), [
+    'uninstall',
+    '--id',
+    'Git.Git',
+    '--exact',
+    '--accept-source-agreements',
+    '--disable-interactivity',
+    '--source',
+    'winget',
+    '--silent'
+  ]);
+});
+
+test('uninstall arguments do not inherit upgrade-only flags', () => {
+  const args = buildUninstallArgs('Git.Git', {
+    includeUnknown: true,
+    includePinned: true,
+    ignoreHash: true
+  });
+
+  assert.ok(!args.includes('--include-unknown'));
+  assert.ok(!args.includes('--include-pinned'));
+  assert.ok(!args.includes('--ignore-security-hash'));
 });
 
 test('never emits --allow-reboot even when a stale allowReboot option is passed', () => {

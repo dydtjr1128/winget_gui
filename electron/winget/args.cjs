@@ -95,6 +95,31 @@ function buildUpgradeArgs(id, options = {}) {
   return args;
 }
 
+function buildUninstallArgs(id, options = {}) {
+  if (!id || typeof id !== 'string') {
+    throw new Error('A package id is required.');
+  }
+
+  const args = [
+    'uninstall',
+    '--id',
+    id,
+    '--exact',
+    '--accept-source-agreements',
+    '--disable-interactivity'
+  ];
+
+  if (options.source) {
+    args.push('--source', options.source);
+  }
+
+  if (options.silent) {
+    args.push('--silent');
+  }
+
+  return args;
+}
+
 // Enables the admin setting that `--ignore-security-hash` is gated by. Requires
 // elevation (the app runs elevated). Changing it is a global winget setting.
 function buildEnableHashOverrideArgs() {
@@ -115,6 +140,7 @@ module.exports = {
   buildListByIdArgs,
   buildExportArgs,
   buildUpgradeArgs,
+  buildUninstallArgs,
   buildEnableHashOverrideArgs,
   buildDisableHashOverrideArgs,
   buildSettingsExportArgs

@@ -194,6 +194,29 @@ ipcMain.handle('winget:upgrade-selected', async (_event, payload) => {
   });
 });
 
+ipcMain.handle('winget:uninstall-selected', async (_event, payload) => {
+  const requestedIds = Array.isArray(payload?.ids) ? payload.ids : [];
+  const selectedPackages = requestedIds
+    .filter((id) => typeof id === 'string' && knownPackages.has(id))
+    .map((id) => knownPackages.get(id));
+
+  if (selectedPackages.length === 0) {
+    return [];
+  }
+
+  const results = await runner.uninstallSelected(selectedPackages, {
+    silent: Boolean(payload?.options?.silent)
+  });
+
+  for (const result of results) {
+    if (result.ok) {
+      knownPackages.delete(result.id);
+    }
+  }
+
+  return results;
+});
+
 ipcMain.handle('winget:cancel-upgrade', () => {
   runner.cancel();
   return true;

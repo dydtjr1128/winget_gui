@@ -98,6 +98,61 @@ test('serializes winget calls — the second starts only after the first closes'
   assert.equal(results.filter((item) => item.ok).length, 2);
 });
 
+test('uninstallSelected runs exact-id winget uninstall and reports operation events', async () => {
+  const calls = [];
+  const starts = [];
+  const completions = [];
+  const fakeSpawn = (_cmd, args) => {
+    calls.push(args);
+    const child = makeFakeChild();
+    setImmediate(() => child.emit('close', 0));
+    return child;
+  };
+
+  const runner = createWingetRunner({ spawn: fakeSpawn });
+  runner.events.on('package-start', (item) => starts.push(item));
+  runner.events.on('package-complete', (item) => completions.push(item));
+
+  const results = await runner.uninstallSelected([
+    { id: 'Git.Git', name: 'Git', source: 'winget' }
+  ], { silent: true });
+
+  assert.deepEqual(calls[0], [
+    'uninstall',
+    '--id',
+    'Git.Git',
+    '--exact',
+    '--accept-source-agreements',
+    '--disable-interactivity',
+    '--source',
+    'winget',
+    '--silent'
+  ]);
+  assert.equal(starts[0].operation, 'uninstall');
+  assert.equal(completions[0].operation, 'uninstall');
+  assert.equal(results[0].ok, true);
+  assert.equal(results[0].operation, 'uninstall');
+});
+
+test('uninstallSelected refuses to spawn a truncated package id', async () => {
+  let spawnCount = 0;
+  const runner = createWingetRunner({
+    spawn: () => {
+      spawnCount += 1;
+      return makeFakeChild();
+    }
+  });
+
+  const results = await runner.uninstallSelected([
+    { id: 'TheDocumentFoundation.Libr…', name: 'LibreOffice', source: 'winget' }
+  ]);
+
+  assert.equal(spawnCount, 0);
+  assert.equal(results[0].ok, false);
+  assert.equal(results[0].failureKind, 'id-resolution');
+  assert.equal(results[0].operation, 'uninstall');
+});
+
 test('ignoreHash enables InstallerHashOverride, passes the flag, then restores the setting', async () => {
   const calls = [];
   const fakeSpawn = (cmd, args) => {

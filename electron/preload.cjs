@@ -9,6 +9,7 @@ function subscribe(channel, callback) {
 contextBridge.exposeInMainWorld('wingetApi', {
   listUpgrades: (options) => ipcRenderer.invoke('winget:list-upgrades', { options }),
   upgradeSelected: (ids, options) => ipcRenderer.invoke('winget:upgrade-selected', { ids, options }),
+  uninstallSelected: (ids, options) => ipcRenderer.invoke('winget:uninstall-selected', { ids, options }),
   cancelUpgrade: () => ipcRenderer.invoke('winget:cancel-upgrade'),
   onLog: (callback) => subscribe('winget:log', callback),
   onPackageStart: (callback) => subscribe('winget:package-start', callback),
