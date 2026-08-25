@@ -668,8 +668,23 @@ function classifyWingetFailure(result) {
     return 'requires-admin';
   }
 
+  // MSI exit code 1618: another installation held the Windows Installer mutex
+  // (e.g. an installer tail still running after the previous package, or a
+  // system update). Transient — the right guidance is "wait and retry", so it
+  // must not fall through to the installer/hash kinds. Checked before the
+  // generic installer patterns because 1618 also matches those.
+  if (
+    /다른 설치가 (?:이미 )?진행/.test(output) ||
+    /another installation is (?:already )?in progress/i.test(output) ||
+    /(?:종료 코드로 인해 실패함|failed with exit code)\D{0,5}1618\b/i.test(output)
+  ) {
+    return 'installer-busy';
+  }
+
   if (
     /설치 종료 코드로 인해/.test(output) ||
+    /설치 관리자가 종료 코드로 인해 실패함/.test(output) ||
+    /installer failed with exit code/i.test(output) ||
     /MsiExec .*failed:\s*-?\d+/i.test(output) ||
     /\b1603\b/.test(output)
   ) {
@@ -692,7 +707,15 @@ function classifyWingetFailure(result) {
     return 'not-applicable';
   }
 
-  if (/hash/i.test(output) || /해시/.test(output)) {
+  // Loose fallback for hash-related failures the explicit patterns above miss.
+  // The routine success line "설치 관리자 해시를 확인했습니다" / "Installer hash
+  // verified" appears in nearly every failure transcript, so it must be
+  // excluded or every installer failure would be classified as a hash error.
+  const outputWithoutHashVerified = output
+    .split(/\r?\n/)
+    .filter((line) => !/해시를 확인했습니다/.test(line) && !/installer hash verified/i.test(line))
+    .join('\n');
+  if (/hash/i.test(outputWithoutHashVerified) || /해시/.test(outputWithoutHashVerified)) {
     return 'hash';
   }
 
