@@ -12,6 +12,7 @@ const { createWingetRunner } = require('./winget/runner.cjs');
 module.exports = {
   buildExportArgs: args.buildExportArgs,
   buildListArgs: args.buildListArgs,
+  buildInstallArgs: args.buildInstallArgs,
   buildListByIdArgs: args.buildListByIdArgs,
   buildSearchArgs: args.buildSearchArgs,
   buildUninstallArgs: args.buildUninstallArgs,

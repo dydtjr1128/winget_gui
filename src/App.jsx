@@ -10,6 +10,7 @@ import {
   Minimize2,
   Minus,
   RefreshCw,
+  RotateCcw,
   Search,
   Settings2,
   ShieldAlert,
@@ -51,6 +52,10 @@ const emptyListMeta = {
   wingetMissing: false
 };
 const languagePreferenceStorageKey = 'winget-gui-language-preference';
+
+// Apps winget cannot uninstall (system-owned, updated by their own updater), so
+// the uninstall-then-install reinstall flow must never target them.
+const selfUpdatingPackageIds = new Set(['Microsoft.Edge']);
 
 function browserLanguageSource() {
   if (typeof navigator === 'undefined') {
@@ -143,12 +148,24 @@ function failureLabelFor(item, t) {
     return t('failure.kind.uninstall');
   }
 
+  if (item.lastAction === 'reinstall') {
+    return t('failure.kind.reinstall');
+  }
+
   return failureKindLabel(failureKindFor(item), t);
 }
 
 function failureAdviceForItem(item, t) {
   if (item.lastAction === 'uninstall') {
     return t('failure.advice.uninstall');
+  }
+
+  if (item.lastAction === 'reinstall') {
+    return t(
+      item.failurePhase === 'install'
+        ? 'failure.advice.reinstall-install'
+        : 'failure.advice.reinstall-uninstall'
+    );
   }
 
   return failureAdviceFor(failureKindFor(item), t);
@@ -370,6 +387,7 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [activeOperation, setActiveOperation] = useState(null);
   const [uninstallTarget, setUninstallTarget] = useState([]);
+  const [reinstallTarget, setReinstallTarget] = useState([]);
   const [elevating, setElevating] = useState(false);
   const [isElevated, setIsElevated] = useState(false);
   const [lastLoadedAt, setLastLoadedAt] = useState('');
@@ -504,10 +522,25 @@ export default function App() {
   const finishedCount = packages.filter((item) => item.status === 'success').length;
   const failedCount = packages.filter((item) => item.status === 'failed').length;
   const failedUpdates = packages.filter(
-    (item) => item.status === 'failed' && item.lastAction !== 'uninstall'
+    (item) =>
+      item.status === 'failed' &&
+      item.lastAction !== 'uninstall' &&
+      item.lastAction !== 'reinstall' &&
+      failureKindFor(item) !== 'install-tech'
   );
   const failedUninstalls = packages.filter(
     (item) => item.status === 'failed' && item.lastAction === 'uninstall'
+  );
+  // install-tech failures can only be fixed by uninstall-then-install; failed
+  // reinstalls stay here so they can be retried through the same flow.
+  const reinstallableFailures = packages.filter(
+    (item) =>
+      item.status === 'failed' &&
+      item.lastAction !== 'uninstall' &&
+      (failureKindFor(item) === 'install-tech' || item.lastAction === 'reinstall')
+  );
+  const reinstallCandidates = reinstallableFailures.filter(
+    (item) => !selfUpdatingPackageIds.has(item.id)
   );
   const pendingCount = Math.max(packages.length - finishedCount - failedCount, 0);
   const wingetCount = listMeta.declaredUpgradeCount ?? packages.length;
@@ -527,7 +560,9 @@ export default function App() {
     : running
       ? activeOperation === 'uninstall'
         ? t('progress.uninstalling')
-        : t('progress.updating')
+        : activeOperation === 'reinstall'
+          ? t('progress.reinstalling')
+          : t('progress.updating')
       : t('progress.syncing');
   const requiresAdminFailure = packages.some(
     (item) => item.status === 'failed' && failureKindFor(item) === 'requires-admin'
@@ -544,7 +579,12 @@ export default function App() {
     }
 
     const counts = failedPackages.reduce((accumulator, item) => {
-      const kind = item.lastAction === 'uninstall' ? 'uninstall' : failureKindFor(item);
+      const kind =
+        item.lastAction === 'uninstall'
+          ? 'uninstall'
+          : item.lastAction === 'reinstall'
+            ? 'reinstall'
+            : failureKindFor(item);
       accumulator[kind] = (accumulator[kind] ?? 0) + 1;
       return accumulator;
     }, {});
@@ -571,7 +611,8 @@ export default function App() {
                   status: 'running',
                   lastAction: item.operation || activeOperation || 'upgrade',
                   failureKind: '',
-                  failureDetail: ''
+                  failureDetail: '',
+                  failurePhase: ''
                 }
               : pkg
           )
@@ -587,7 +628,8 @@ export default function App() {
                   status: result.ok ? 'success' : 'failed',
                   lastAction: result.operation || pkg.lastAction || 'upgrade',
                   failureKind: result.ok ? '' : result.failureKind || 'generic',
-                  failureDetail: result.ok ? '' : String(result.failureDetail ?? '').trim()
+                  failureDetail: result.ok ? '' : String(result.failureDetail ?? '').trim(),
+                  failurePhase: result.ok ? '' : result.phase || ''
                 }
               : pkg
           )
@@ -641,7 +683,8 @@ export default function App() {
           status: 'idle',
           lastAction: '',
           failureKind: '',
-          failureDetail: ''
+          failureDetail: '',
+          failurePhase: ''
         }))
       );
       setActiveQueueTotal(0);
@@ -802,7 +845,7 @@ export default function App() {
     setPackages((current) =>
       current.map((item) =>
         idSet.has(item.id)
-          ? { ...item, status: 'idle', lastAction: 'upgrade', failureKind: '', failureDetail: '' }
+          ? { ...item, status: 'idle', lastAction: 'upgrade', failureKind: '', failureDetail: '', failurePhase: '' }
           : item
       )
     );
@@ -844,7 +887,7 @@ export default function App() {
     setPackages((current) =>
       current.map((item) =>
         idSet.has(item.id)
-          ? { ...item, status: 'idle', lastAction: 'uninstall', failureKind: '', failureDetail: '' }
+          ? { ...item, status: 'idle', lastAction: 'uninstall', failureKind: '', failureDetail: '', failurePhase: '' }
           : item
       )
     );
@@ -883,6 +926,59 @@ export default function App() {
 
   function retryFailedUninstalls() {
     setUninstallTarget(failedUninstalls.map(({ id, name }) => ({ id, name })));
+  }
+
+  async function runReinstalls(ids) {
+    if (ids.length === 0 || busy || !api?.reinstallSelected) {
+      return;
+    }
+
+    const idSet = new Set(ids);
+    setActiveOperation('reinstall');
+    setActiveQueueTotal(ids.length);
+    setActiveQueueIds(ids);
+    setPackages((current) =>
+      current.map((item) =>
+        idSet.has(item.id)
+          ? { ...item, status: 'idle', lastAction: 'reinstall', failureKind: '', failureDetail: '', failurePhase: '' }
+          : item
+      )
+    );
+    addLog(tRef.current('logs.reinstallStart', { count: ids.length }));
+
+    try {
+      const results = await api.reinstallSelected(ids, { silent: options.silent });
+      addLog(tRef.current('logs.reinstallComplete'));
+      if (Array.isArray(results) && results.length > 0 && results.every((result) => result.ok)) {
+        await refreshList({ force: true });
+      }
+    } catch (error) {
+      addLog(error.message);
+    } finally {
+      setActiveOperation(null);
+      setActiveQueueTotal(0);
+      setActiveQueueIds([]);
+    }
+  }
+
+  function requestReinstall() {
+    if (reinstallCandidates.length === 0 || busy) {
+      return;
+    }
+
+    for (const item of reinstallableFailures) {
+      if (selfUpdatingPackageIds.has(item.id)) {
+        addLog(tRef.current('logs.reinstallExcluded', { name: item.name || item.id }));
+      }
+    }
+
+    setReinstallTarget(reinstallCandidates.map(({ id, name }) => ({ id, name })));
+  }
+
+  function confirmReinstall() {
+    const ids = reinstallTarget.map((item) => item.id);
+    setReinstallTarget([]);
+    runReinstalls(ids);
   }
 
   async function cancelUpdates() {
@@ -1097,6 +1193,16 @@ export default function App() {
                   {t('actions.retryFailedUninstall')} ({failedUninstalls.length})
                 </button>
               ) : null}
+              {reinstallCandidates.length > 0 && !busy ? (
+                <button
+                  className="button warning"
+                  onClick={requestReinstall}
+                  title={t('tooltips.reinstall')}
+                >
+                  <RotateCcw size={17} />
+                  {t('actions.reinstall')} ({reinstallCandidates.length})
+                </button>
+              ) : null}
               <button
                 className="button uninstall-trigger"
                 onClick={requestUninstall}
@@ -1293,6 +1399,62 @@ export default function App() {
               <button className="button destructive" onClick={confirmUninstall} autoFocus>
                 <Trash2 size={17} />
                 {t('actions.confirmUninstall', { count: uninstallTarget.length })}
+              </button>
+            </div>
+          </section>
+        </div>
+      ) : null}
+
+      {reinstallTarget.length > 0 ? (
+        <div
+          className="dialog-backdrop"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) {
+              setReinstallTarget([]);
+            }
+          }}
+        >
+          <section
+            className="uninstall-dialog"
+            role="alertdialog"
+            aria-modal="true"
+            aria-labelledby="reinstall-dialog-title"
+            aria-describedby="reinstall-dialog-description"
+          >
+            <div className="uninstall-dialog-icon" aria-hidden="true">
+              <RotateCcw size={23} />
+            </div>
+            <div className="uninstall-dialog-copy">
+              <span className="dialog-kicker">{t('reinstall.kicker')}</span>
+              <h2 id="reinstall-dialog-title">
+                {t('reinstall.title', { count: reinstallTarget.length })}
+              </h2>
+              <p id="reinstall-dialog-description">{t('reinstall.description')}</p>
+            </div>
+            <ul className="uninstall-list">
+              {reinstallTarget.slice(0, 4).map((item) => (
+                <li key={item.id}>
+                  <span>{item.name || item.id}</span>
+                  <code>{item.id}</code>
+                </li>
+              ))}
+              {reinstallTarget.length > 4 ? (
+                <li className="uninstall-list-more">
+                  {t('uninstall.more', { count: reinstallTarget.length - 4 })}
+                </li>
+              ) : null}
+            </ul>
+            <div className="uninstall-warning">
+              <CircleAlert size={17} />
+              <span>{t('reinstall.warning')}</span>
+            </div>
+            <div className="dialog-actions">
+              <button className="button secondary" onClick={() => setReinstallTarget([])}>
+                {t('actions.keep')}
+              </button>
+              <button className="button warning" onClick={confirmReinstall} autoFocus>
+                <RotateCcw size={17} />
+                {t('actions.confirmReinstall', { count: reinstallTarget.length })}
               </button>
             </div>
           </section>

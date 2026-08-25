@@ -188,6 +188,96 @@ test('uninstallSelected refuses to spawn a truncated package id', async () => {
   assert.equal(results[0].operation, 'uninstall');
 });
 
+test('reinstallSelected uninstalls first, then installs fresh from the same source', async () => {
+  const calls = [];
+  const starts = [];
+  const completions = [];
+  const fakeSpawn = (_cmd, args) => {
+    calls.push(args);
+    const child = makeFakeChild();
+    setImmediate(() => child.emit('close', 0));
+    return child;
+  };
+
+  const runner = createWingetRunner({ spawn: fakeSpawn });
+  runner.events.on('package-start', (item) => starts.push(item));
+  runner.events.on('package-complete', (item) => completions.push(item));
+
+  const results = await runner.reinstallSelected([
+    { id: 'JanDeDobbeleer.OhMyPosh', name: 'Oh My Posh', source: 'winget' }
+  ], { silent: true });
+
+  assert.equal(calls.length, 2);
+  assert.deepEqual(calls[0], [
+    'uninstall',
+    '--id',
+    'JanDeDobbeleer.OhMyPosh',
+    '--exact',
+    '--accept-source-agreements',
+    '--disable-interactivity',
+    '--source',
+    'winget',
+    '--silent'
+  ]);
+  assert.deepEqual(calls[1], [
+    'install',
+    '--id',
+    'JanDeDobbeleer.OhMyPosh',
+    '--exact',
+    '--accept-package-agreements',
+    '--accept-source-agreements',
+    '--disable-interactivity',
+    '--source',
+    'winget',
+    '--silent'
+  ]);
+  assert.equal(starts[0].operation, 'reinstall');
+  assert.equal(completions.length, 1);
+  assert.equal(results[0].ok, true);
+  assert.equal(results[0].operation, 'reinstall');
+  assert.equal(results[0].phase, 'install');
+});
+
+test('reinstallSelected skips the install step when the uninstall fails', async () => {
+  const calls = [];
+  const fakeSpawn = (_cmd, args) => {
+    calls.push(args);
+    const child = makeFakeChild();
+    setImmediate(() => child.emit('close', args[0] === 'uninstall' ? 1 : 0));
+    return child;
+  };
+
+  const runner = createWingetRunner({ spawn: fakeSpawn });
+  const results = await runner.reinstallSelected([
+    { id: 'JanDeDobbeleer.OhMyPosh', name: 'Oh My Posh', source: 'winget' }
+  ]);
+
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0][0], 'uninstall');
+  assert.equal(results[0].ok, false);
+  assert.equal(results[0].operation, 'reinstall');
+  assert.equal(results[0].phase, 'uninstall');
+});
+
+test('reinstallSelected refuses to spawn a truncated package id', async () => {
+  let spawnCount = 0;
+  const runner = createWingetRunner({
+    spawn: () => {
+      spawnCount += 1;
+      return makeFakeChild();
+    }
+  });
+
+  const results = await runner.reinstallSelected([
+    { id: 'TheDocumentFoundation.Libr…', name: 'LibreOffice', source: 'winget' }
+  ]);
+
+  assert.equal(spawnCount, 0);
+  assert.equal(results[0].ok, false);
+  assert.equal(results[0].failureKind, 'id-resolution');
+  assert.equal(results[0].operation, 'reinstall');
+});
+
 test('ignoreHash enables InstallerHashOverride, passes the flag, then restores the setting', async () => {
   const calls = [];
   const fakeSpawn = (cmd, args) => {
