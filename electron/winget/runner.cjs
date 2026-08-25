@@ -383,7 +383,7 @@ function createWingetRunner({ spawn: spawnImpl = spawn } = {}) {
           continue;
         }
 
-        const args = buildUpgradeArgs(item.id, options);
+        const args = buildUpgradeArgs(item.id, { ...options, source: item.source });
         const result = await runWinget(args);
         const failureDetail = summarizeWingetFailure(result);
         const itemResult = {
