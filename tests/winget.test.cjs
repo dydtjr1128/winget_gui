@@ -14,6 +14,7 @@ const {
   parseWingetExportPackages,
   parseWingetUpgradeOutput,
   parseWingetUpgradeResult,
+  repairDoubleEncodedUtf8,
   resolvePackageIdFromExport,
   resolvePackageIdFromListOutput,
   resolvePackageIdFromSearchOutput,
@@ -200,6 +201,48 @@ test('emits carriage-return log frames as terminal line replacements', () => {
     { text: '|', replace: true },
     { text: '찾음 Warp [Warp.Warp] 버전 v0', replace: true }
   ]);
+});
+
+test('repairs winget double-encoded UTF-8 system messages in the log stream', () => {
+  // The exact shape winget emits for a localized WinHTTP error: UTF-8 bytes of
+  // the Korean message re-read as Latin-1 (includes invisible C1 controls).
+  const mojibake = Buffer.from('서버에 연결할 수 없습니다.', 'utf8').toString('latin1');
+  const entries = [];
+  const processor = createTerminalLogProcessor((entry) => entries.push(entry));
+
+  processor.write(`WinHttpSendRequest: 12029: ${mojibake}\n`);
+  processor.flush();
+
+  assert.deepEqual(entries, [
+    { text: 'WinHttpSendRequest: 12029: 서버에 연결할 수 없습니다.', replace: false }
+  ]);
+});
+
+test('repairs double-encoded lines independently while leaving intact Korean lines alone', () => {
+  // Repair must be per line: a whole-text pass would bail out because the
+  // healthy Korean line sits outside the Latin-1 range.
+  const mojibake = Buffer.from('서버에 연결할 수 없습니다.', 'utf8').toString('latin1');
+  const sanitized = sanitizeWingetOutput(
+    ['원본을 검색하는 동안 실패함: msstore', `WinHttpSendRequest: 12029: ${mojibake}`].join('\n')
+  );
+
+  assert.equal(
+    sanitized,
+    [
+      '원본을 검색하는 동안 실패함: msstore',
+      'WinHttpSendRequest: 12029: 서버에 연결할 수 없습니다.'
+    ].join('\n')
+  );
+});
+
+test('leaves ordinary Latin-1 text and unrepairable C1 lines unchanged', () => {
+  assert.equal(repairDoubleEncodedUtf8('Café 1.0 installed'), 'Café 1.0 installed');
+
+  const notDoubleEncoded = `bad ${String.fromCharCode(0x85)} line`;
+  assert.equal(repairDoubleEncodedUtf8(notDoubleEncoded), notDoubleEncoded);
+
+  const realKorean = '원본을 검색하는 동안 실패함: msstore';
+  assert.equal(repairDoubleEncodedUtf8(realKorean), realKorean);
 });
 
 test('emits CRLF log lines as append-only lines', () => {

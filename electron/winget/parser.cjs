@@ -7,6 +7,7 @@
 // progress output.
 const ESC = String.fromCharCode(0x1b);
 const BACKSPACE = String.fromCharCode(0x08);
+const REPLACEMENT_CHAR = String.fromCharCode(0xfffd);
 const ANSI_PATTERN = new RegExp(`${ESC}\\[[0-?]*[ -/]*[@-~]`, 'g');
 const CONTROL_CHARS_PATTERN = new RegExp(`[${BACKSPACE}${ESC}]`, 'g');
 const TRUNCATION_PATTERN = /…|\.\.\./;
@@ -17,12 +18,32 @@ function stripTerminalControlSequences(text) {
     .replace(CONTROL_CHARS_PATTERN, '');
 }
 
+// winget sometimes emits localized Windows error messages double-encoded: the
+// UTF-8 bytes of e.g. "서버에 연결할 수 없습니다" re-read as Latin-1, which
+// renders as "ìë²ì…" plus invisible C1 controls (its own diagnostic log shows
+// the same bytes, so this happens inside winget, not in our decoding). C1 code
+// points never appear in legitimate output, so a line that contains one and
+// stays within the Latin-1 range can be repaired by round-tripping through
+// latin1; keep the original when the bytes are not valid UTF-8 after all.
+function repairDoubleEncodedUtf8(line) {
+  const value = String(line ?? '');
+  if (!/[\x80-\x9f]/.test(value) || !/^[\x00-\xff]*$/.test(value)) {
+    return value;
+  }
+
+  const decoded = Buffer.from(value, 'latin1').toString('utf8');
+  return decoded.includes(REPLACEMENT_CHAR) ? value : decoded;
+}
+
 function sanitizeWingetOutput(text) {
   return stripTerminalControlSequences(text)
     .replace(/\r\n/g, '\n')
     .replace(/\r/g, '\n')
     .replace(/^\n+/, '')
-    .trimEnd();
+    .trimEnd()
+    .split('\n')
+    .map((line) => repairDoubleEncodedUtf8(line))
+    .join('\n');
 }
 
 function createTerminalLogProcessor(emit) {
@@ -30,7 +51,9 @@ function createTerminalLogProcessor(emit) {
   let hasReplaceTarget = false;
 
   function emitBufferedLine(replace) {
-    const text = line.trim();
+    // Repair before trim: U+0085/U+00A0 count as whitespace for trim() and may
+    // be meaningful continuation bytes of a double-encoded sequence.
+    const text = repairDoubleEncodedUtf8(line).trim();
     line = '';
 
     if (!text) {
@@ -734,6 +757,7 @@ function classifyWingetFailure(result) {
 }
 
 module.exports = {
+  repairDoubleEncodedUtf8,
   sanitizeWingetOutput,
   createTerminalLogProcessor,
   isPackageId,

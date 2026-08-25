@@ -23,6 +23,7 @@ module.exports = {
   parseWingetExportPackages: parser.parseWingetExportPackages,
   parseWingetUpgradeOutput: parser.parseWingetUpgradeOutput,
   parseWingetUpgradeResult: parser.parseWingetUpgradeResult,
+  repairDoubleEncodedUtf8: parser.repairDoubleEncodedUtf8,
   resolvePackageIdFromExport: resolver.resolvePackageIdFromExport,
   resolvePackageIdFromListOutput: resolver.resolvePackageIdFromListOutput,
   resolvePackageIdFromSearchOutput: resolver.resolvePackageIdFromSearchOutput,
