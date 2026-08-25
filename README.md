@@ -11,12 +11,9 @@ Windows `winget`을 GUI 형태로 만들어 원하는 패키지만 골라 업데
 - `winget upgrade` 결과를 패키지 이름, ID, 현재 버전, 업데이트 버전, 원본 기준으로 표시
 - 원하는 항목만 체크해서 순차 업데이트
 - 이름, 패키지 ID, 버전 검색
-- `winget`이 보고한 개수와 실제 표 표시 개수를 분리 표시
-- 버전 미확인 패키지 개수 안내 및 `--include-unknown` 옵션 지원
-- 무인 설치, 고정 항목 포함 옵션 지원
-- 실행 시 자동으로 관리자 권한(UAC) 요청 — 설치/제거에 권한이 필요한 패키지를 안정적으로 업데이트
+- 무인 설치, 버전 미확인 패키지 포함, 고정 항목 포함 옵션 지원
+- 실행 시 관리자 권한(UAC) 자동 요청
 - 업데이트 상태와 `winget` 로그 표시
-- 터미널의 진행률/스피너처럼 같은 줄을 갱신하는 로그 처리
 
 ## 요구 사항
 
@@ -61,39 +58,7 @@ release\Winget GUI Portable\Winget GUI.exe
 
 `npm start`, `npm run dev:app`로 실행하는 개발 모드에서는 매니페스트가 적용되지 않아 일반 권한으로 시작합니다. 필요하면 앱 안의 "관리자 재시작" 버튼으로 승격할 수 있습니다.
 
-> ⚠️ 항상 관리자 권한으로 실행되므로, 포터블 폴더(`resources/app` 안의 JS 포함)가 변조되면 그 코드가 관리자 권한으로 실행됩니다. 일반 사용자가 임의로 쓸 수 없는 위치에 두고 실행하세요. 현재 빌드는 코드 서명되지 않았으니 신뢰할 수 있는 경로에서만 사용하는 것을 권장합니다.
-
-## GitHub 릴리즈 만들기
-
-GitHub Actions는 `v*` 형식의 태그가 push되면 자동으로 릴리즈를 생성합니다.
-
-```powershell
-git tag v<package.json 버전>
-git push origin v<package.json 버전>
-```
-
-태그 이름은 `package.json`의 `version`과 일치해야 합니다.
-
-릴리즈에는 다음 Windows x64 실행 파일이 첨부됩니다.
-
-```text
-Winget-GUI-Portable-0.1.0-x64.exe
-Winget-GUI-Setup-0.1.0-x64.exe
-```
-
-포터블 exe는 설치 없이 실행하는 단일 파일이고, Setup exe는 설치 경로를 선택할 수 있는 설치 파일입니다. 코드 서명 인증서를 연결하지 않은 상태에서는 Windows SmartScreen 경고가 표시될 수 있습니다.
-
-GitHub Actions는 릴리즈 exe에 GitHub Artifact Attestation도 생성합니다. 이 증명은 Windows 코드 서명을 대체하지는 않지만, exe가 이 공개 저장소의 GitHub Actions에서 빌드된 산출물인지 확인하는 데 사용할 수 있습니다.
-
-```powershell
-gh attestation verify .\Winget-GUI-Portable-0.1.0-x64.exe --repo dydtjr1128/winget_gui
-```
-
-### Windows SmartScreen 안내
-
-릴리즈 exe가 코드 서명되지 않았거나 Microsoft SmartScreen 평판이 아직 충분하지 않으면 `알 수 없는 게시자` 경고가 표시될 수 있습니다. 이 경고는 앱 아이콘이나 패키징 오류가 아니라 Windows 보안 정책에 따른 배포 신뢰도 문제입니다.
-
-개발자가 경고를 줄이려면 Windows 코드 서명 인증서로 릴리즈 exe를 서명해야 합니다. 서명하면 `알 수 없는 게시자` 대신 검증된 게시자 이름을 표시할 수 있지만, Microsoft SmartScreen 평판은 게시자 신뢰와 파일 해시 다운로드 이력을 함께 평가하므로 새 빌드에서는 경고가 계속 표시될 수 있습니다. Microsoft는 2024년 이후 EV 인증서도 새 파일의 SmartScreen 경고를 즉시 우회하지 않는다고 안내합니다. 서명 인증서가 없는 초기 릴리즈에서는 사용자가 SmartScreen의 `추가 정보`에서 실행을 선택해야 할 수 있습니다.
+항상 관리자 권한으로 실행되므로 포터블 폴더가 변조되면 그 코드도 관리자 권한으로 실행됩니다. 현재 빌드는 코드 서명되지 않았으므로, 일반 사용자가 임의로 쓸 수 없는 신뢰할 수 있는 경로에 두고 사용하세요.
 
 ## 업데이트 동작
 
