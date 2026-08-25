@@ -3,6 +3,7 @@ const test = require('node:test');
 
 const {
   buildExportArgs,
+  buildInstallArgs,
   buildListArgs,
   buildListByIdArgs,
   buildSearchArgs,
@@ -312,6 +313,30 @@ test('builds safe exact-id uninstall arguments with source and silent mode', () 
     'winget',
     '--silent'
   ]);
+});
+
+test('builds safe exact-id install arguments with source and silent mode', () => {
+  assert.deepEqual(buildInstallArgs('JanDeDobbeleer.OhMyPosh', {
+    source: 'winget',
+    silent: true
+  }), [
+    'install',
+    '--id',
+    'JanDeDobbeleer.OhMyPosh',
+    '--exact',
+    '--accept-package-agreements',
+    '--accept-source-agreements',
+    '--disable-interactivity',
+    '--source',
+    'winget',
+    '--silent'
+  ]);
+});
+
+test('install arguments omit --source when the row had none and require an id', () => {
+  assert.ok(!buildInstallArgs('Git.Git', {}).includes('--source'));
+  assert.ok(!buildInstallArgs('Git.Git', { source: '' }).includes('--source'));
+  assert.throws(() => buildInstallArgs(''));
 });
 
 test('uninstall arguments do not inherit upgrade-only flags', () => {

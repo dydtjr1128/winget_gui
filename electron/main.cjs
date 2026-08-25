@@ -217,6 +217,21 @@ ipcMain.handle('winget:uninstall-selected', async (_event, payload) => {
   return results;
 });
 
+ipcMain.handle('winget:reinstall-selected', async (_event, payload) => {
+  const requestedIds = Array.isArray(payload?.ids) ? payload.ids : [];
+  const selectedPackages = requestedIds
+    .filter((id) => typeof id === 'string' && knownPackages.has(id))
+    .map((id) => knownPackages.get(id));
+
+  if (selectedPackages.length === 0) {
+    return [];
+  }
+
+  return runner.reinstallSelected(selectedPackages, {
+    silent: Boolean(payload?.options?.silent)
+  });
+});
+
 ipcMain.handle('winget:cancel-upgrade', () => {
   runner.cancel();
   return true;

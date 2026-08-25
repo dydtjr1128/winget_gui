@@ -29,6 +29,7 @@ const {
   buildSearchArgs,
   buildExportArgs,
   buildUpgradeArgs,
+  buildInstallArgs,
   buildUninstallArgs,
   buildEnableHashOverrideArgs,
   buildDisableHashOverrideArgs,
@@ -484,6 +485,99 @@ function createWingetRunner({ spawn: spawnImpl = spawn } = {}) {
     return results;
   }
 
+  // Uninstall-then-install for packages whose new version uses a different
+  // install technology (winget refuses the in-place upgrade). The install step
+  // runs only after a successful uninstall, so a failed removal never leaves a
+  // half-done state; a failed install after removal is reported with its phase
+  // so the UI can tell the user the app is currently uninstalled.
+  async function reinstallSelected(packages, options = {}) {
+    cancelled = false;
+    const results = [];
+
+    for (const item of packages) {
+      if (cancelled) {
+        results.push({
+          id: item.id,
+          name: item.name,
+          operation: 'reinstall',
+          ok: false,
+          code: null,
+          skipped: true
+        });
+        continue;
+      }
+
+      events.emit('package-start', { ...item, operation: 'reinstall' });
+      events.emit('log', `재설치 시작: ${item.name || item.id}`);
+
+      if (hasTruncatedMarker(item.id)) {
+        const itemResult = {
+          id: item.id,
+          name: item.name,
+          operation: 'reinstall',
+          ok: false,
+          code: null,
+          failureKind: 'id-resolution',
+          failureDetail: `winget 목록에서 패키지 ID가 잘려 안전하게 재설치할 수 없습니다: ${item.id}`,
+          stdout: '',
+          stderr: ''
+        };
+        results.push(itemResult);
+        events.emit('package-complete', itemResult);
+        continue;
+      }
+
+      const uninstallResult = await runWinget(
+        buildUninstallArgs(item.id, {
+          source: item.source,
+          silent: Boolean(options.silent)
+        })
+      );
+
+      if (!uninstallResult.ok) {
+        const itemResult = {
+          id: item.id,
+          name: item.name,
+          operation: 'reinstall',
+          phase: 'uninstall',
+          ok: false,
+          code: uninstallResult.code,
+          failureKind: classifyWingetFailure(uninstallResult),
+          failureDetail: summarizeWingetFailure(uninstallResult),
+          stdout: uninstallResult.stdout,
+          stderr: uninstallResult.stderr
+        };
+        results.push(itemResult);
+        events.emit('package-complete', itemResult);
+        continue;
+      }
+
+      const installResult = await runWinget(
+        buildInstallArgs(item.id, {
+          source: item.source,
+          silent: Boolean(options.silent)
+        })
+      );
+      const itemResult = {
+        id: item.id,
+        name: item.name,
+        operation: 'reinstall',
+        phase: 'install',
+        ok: installResult.ok,
+        code: installResult.code,
+        failureKind: classifyWingetFailure(installResult),
+        failureDetail: summarizeWingetFailure(installResult),
+        stdout: installResult.stdout,
+        stderr: installResult.stderr
+      };
+      results.push(itemResult);
+      events.emit('package-complete', itemResult);
+    }
+
+    events.emit('queue-complete', results);
+    return results;
+  }
+
   function cancel() {
     cancelled = true;
     if (currentProcess) {
@@ -496,6 +590,7 @@ function createWingetRunner({ spawn: spawnImpl = spawn } = {}) {
     listUpgrades,
     upgradeSelected,
     uninstallSelected,
+    reinstallSelected,
     cancel
   };
 }

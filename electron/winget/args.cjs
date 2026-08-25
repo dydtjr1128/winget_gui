@@ -102,6 +102,35 @@ function buildUpgradeArgs(id, options = {}) {
   return args;
 }
 
+// Fresh install of the latest version, used as the second step of a reinstall
+// after the installed copy has been removed. `upgrade` cannot be used there:
+// with nothing installed it reports "no installed package found".
+function buildInstallArgs(id, options = {}) {
+  if (!id || typeof id !== 'string') {
+    throw new Error('A package id is required.');
+  }
+
+  const args = [
+    'install',
+    '--id',
+    id,
+    '--exact',
+    '--accept-package-agreements',
+    '--accept-source-agreements',
+    '--disable-interactivity'
+  ];
+
+  if (options.source) {
+    args.push('--source', options.source);
+  }
+
+  if (options.silent) {
+    args.push('--silent');
+  }
+
+  return args;
+}
+
 function buildUninstallArgs(id, options = {}) {
   if (!id || typeof id !== 'string') {
     throw new Error('A package id is required.');
@@ -147,6 +176,7 @@ module.exports = {
   buildListByIdArgs,
   buildExportArgs,
   buildUpgradeArgs,
+  buildInstallArgs,
   buildUninstallArgs,
   buildEnableHashOverrideArgs,
   buildDisableHashOverrideArgs,
