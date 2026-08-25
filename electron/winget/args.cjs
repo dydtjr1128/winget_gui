@@ -76,6 +76,13 @@ function buildUpgradeArgs(id, options = {}) {
     '--disable-interactivity'
   ];
 
+  // Pin the source the upgrade row came from. Without it winget searches every
+  // configured source, so a transient msstore outage aborts the whole command
+  // (0x80072EFD) even for winget-source packages.
+  if (options.source) {
+    args.push('--source', options.source);
+  }
+
   if (options.silent) {
     args.push('--silent');
   }

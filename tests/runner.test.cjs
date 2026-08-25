@@ -98,6 +98,41 @@ test('serializes winget calls — the second starts only after the first closes'
   assert.equal(results.filter((item) => item.ok).length, 2);
 });
 
+test('upgradeSelected pins each package to the source it was listed from', async () => {
+  const calls = [];
+  const fakeSpawn = (_cmd, args) => {
+    calls.push(args);
+    const child = makeFakeChild();
+    setImmediate(() => child.emit('close', 0));
+    return child;
+  };
+
+  const runner = createWingetRunner({ spawn: fakeSpawn });
+  const results = await runner.upgradeSelected(
+    [
+      { id: 'Git.Git', name: 'Git', source: 'winget' },
+      { id: 'Some.StoreApp', name: 'Store App', source: '' }
+    ],
+    { silent: true }
+  );
+
+  assert.deepEqual(calls[0], [
+    'upgrade',
+    '--id',
+    'Git.Git',
+    '--exact',
+    '--accept-package-agreements',
+    '--accept-source-agreements',
+    '--disable-interactivity',
+    '--source',
+    'winget',
+    '--silent'
+  ]);
+  // A row without a parsed source must not emit a bare/empty --source flag.
+  assert.ok(!calls[1].includes('--source'));
+  assert.equal(results.every((item) => item.ok), true);
+});
+
 test('uninstallSelected runs exact-id winget uninstall and reports operation events', async () => {
   const calls = [];
   const starts = [];

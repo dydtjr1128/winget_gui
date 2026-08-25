@@ -234,6 +234,26 @@ test('builds safe exact-id upgrade arguments', () => {
   ]);
 });
 
+test('pins the package source in upgrade arguments when known', () => {
+  assert.deepEqual(buildUpgradeArgs('Git.Git', { source: 'winget', silent: true }), [
+    'upgrade',
+    '--id',
+    'Git.Git',
+    '--exact',
+    '--accept-package-agreements',
+    '--accept-source-agreements',
+    '--disable-interactivity',
+    '--source',
+    'winget',
+    '--silent'
+  ]);
+});
+
+test('omits --source from upgrade arguments when the source is unknown', () => {
+  assert.ok(!buildUpgradeArgs('Git.Git', {}).includes('--source'));
+  assert.ok(!buildUpgradeArgs('Git.Git', { source: '' }).includes('--source'));
+});
+
 test('builds safe exact-id uninstall arguments with source and silent mode', () => {
   assert.deepEqual(buildUninstallArgs('Git.Git', {
     source: 'winget',
