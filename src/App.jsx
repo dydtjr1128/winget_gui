@@ -214,12 +214,11 @@ function StatusIcon({ status, t }) {
 function StatusCell({ item, t }) {
   const label = statusTextFor(item, t);
   const detail = statusDetailFor(item, t);
-  const title = detail ? `${t('status.failureDetail')}\n${detail}` : label;
 
   return (
     <div
       className={statusClassNameFor(item, detail)}
-      title={title}
+      title={detail ? undefined : label}
       data-detail={detail || undefined}
       tabIndex={detail ? 0 : undefined}
       aria-label={detail ? `${label}: ${detail}` : label}
