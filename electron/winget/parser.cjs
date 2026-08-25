@@ -698,6 +698,17 @@ function classifyWingetFailure(result) {
     return 'not-found';
   }
 
+  // winget refuses an in-place upgrade when the manifest's installer type no
+  // longer matches the installed one (e.g. Edge, Oh My Posh after its MSI
+  // switch). Retrying never helps — the fix is uninstall + reinstall, so it
+  // deserves its own kind instead of the generic retry advice.
+  if (
+    /설치 기술이 현재 설치된 버전과 다/.test(output) ||
+    /install technology is different/i.test(output)
+  ) {
+    return 'install-tech';
+  }
+
   if (
     /적용 가능한 업그레이드를 찾을 수 없습니다/.test(output) ||
     /시스템 또는 요구 사항에는 적용되지 않습니다/.test(output) ||

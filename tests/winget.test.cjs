@@ -775,6 +775,32 @@ test('classifies a non-1618 installer exit code as installer even with the hash-
   assert.equal(kind, 'installer');
 });
 
+test('classifies an install-technology mismatch as install-tech', () => {
+  // Korean transcript, as produced for Microsoft.Edge / JanDeDobbeleer.OhMyPosh.
+  assert.equal(
+    classifyWingetFailure({
+      ok: false,
+      code: 1,
+      stdout: `
+찾음 Microsoft Edge [Microsoft.Edge] 버전 151.0.4129.107
+최신 버전을 찾았지만 설치 기술이 현재 설치된 버전과 다릅니다. 패키지를 제거하고 최신 버전을 설치하세요.
+`,
+      stderr: ''
+    }),
+    'install-tech'
+  );
+  assert.equal(
+    classifyWingetFailure({
+      ok: false,
+      code: 1,
+      stdout:
+        'A newer version was found, but the install technology is different from the current version installed. Please uninstall the package and install the newer version.',
+      stderr: ''
+    }),
+    'install-tech'
+  );
+});
+
 test('summarizes a winget applicability failure with the explanatory line', () => {
   const detail = summarizeWingetFailure({
     ok: false,
