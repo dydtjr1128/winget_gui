@@ -701,6 +701,60 @@ test('classifies installer exit code 2 with a manifest mismatch as a hash failur
   assert.equal(kind, 'hash');
 });
 
+test('classifies MSI exit code 1618 as installer-busy, not a hash error', () => {
+  // Real-world transcript shape: the routine "hash verified" line is present,
+  // which used to trip the loose hash fallback and mislabel this as 해시 오류.
+  const kind = classifyWingetFailure({
+    ok: false,
+    code: 1,
+    stdout: `
+찾음 Microsoft Azure CLI (64-bit) [Microsoft.AzureCLI] 버전 2.89.1
+설치 관리자 해시를 확인했습니다.
+패키지 설치를 시작하는 중...
+설치 관리자가 종료 코드로 인해 실패함: 1618
+`,
+    stderr: ''
+  });
+
+  assert.equal(kind, 'installer-busy');
+});
+
+test('classifies the English install-in-progress messages as installer-busy', () => {
+  assert.equal(
+    classifyWingetFailure({
+      ok: false,
+      code: 1,
+      stdout: 'Installer hash verified\nInstaller failed with exit code: 1618',
+      stderr: ''
+    }),
+    'installer-busy'
+  );
+  assert.equal(
+    classifyWingetFailure({
+      ok: false,
+      code: 1,
+      stdout: 'Another installation is already in progress. Try again later.',
+      stderr: ''
+    }),
+    'installer-busy'
+  );
+});
+
+test('classifies a non-1618 installer exit code as installer even with the hash-verified line', () => {
+  const kind = classifyWingetFailure({
+    ok: false,
+    code: 1,
+    stdout: `
+설치 관리자 해시를 확인했습니다.
+패키지 설치를 시작하는 중...
+설치 관리자가 종료 코드로 인해 실패함: 1622
+`,
+    stderr: ''
+  });
+
+  assert.equal(kind, 'installer');
+});
+
 test('summarizes a winget applicability failure with the explanatory line', () => {
   const detail = summarizeWingetFailure({
     ok: false,
