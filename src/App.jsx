@@ -310,38 +310,32 @@ function BrandLogo({ compact = false }) {
 }
 
 function ProgressBanner({ active, label, progress, queue, operation, t }) {
-  if (!active) {
-    return null;
-  }
-
   const isDeterminate = typeof progress === 'number';
+  const current = queue?.current;
+  const packageLabel = current
+    ? t('progress.current', { position: queue.position, total: queue.total, name: current.name || current.id })
+    : t('progress.preparing');
+  const version = current?.installedVersion
+    ? `${current.installedVersion}${operation !== 'uninstall' && current.availableVersion ? ` → ${current.availableVersion}` : ''}`
+    : '';
 
   return (
-    <div className="progress-banner" role="status" aria-live="polite">
+    <div className="progress-banner" data-active={active} role="status" aria-live="polite">
       <div className="progress-copy">
-        <span>{label}</span>
+        <span className={queue ? 'current-package' : ''} title={queue ? packageLabel : label}>
+          {active ? <Loader2 size={15} className="spin" aria-hidden="true" /> : <CheckCircle2 size={15} aria-hidden="true" />}
+          {queue ? <><span className="operation-label">{t(`progress.action.${operation}`)}</span><strong>{packageLabel}</strong></> : label}
+        </span>
         {isDeterminate ? <strong>{Math.min(progress, 100)}%</strong> : null}
       </div>
-      {queue ? (
-        <>
-          <div className="current-package">
-            <Loader2 size={20} className="spin" aria-hidden="true" />
-            <div>
-              <strong>{queue.current
-                ? t('progress.current', { position: queue.position, total: queue.total, name: queue.current.name || queue.current.id })
-                : t('progress.preparing')}</strong>
-              {queue.current ? <span className="mono">{queue.current.id}</span> : null}
-            </div>
-            {queue.current?.installedVersion ? (
-              <span className="current-package-version mono">
-                {queue.current.installedVersion}
-                {operation !== 'uninstall' && queue.current.availableVersion ? ` → ${queue.current.availableVersion}` : ''}
-              </span>
-            ) : null}
-          </div>
-          <span className="queue-completed">{t('progress.completed', { completed: queue.completed, total: queue.total })}</span>
-        </>
-      ) : null}
+      <div className="progress-detail">
+        <span className="package-detail mono" title={current ? `${current.id} · ${version}` : ''}>
+          {current?.id}{version ? <> · <span className="current-package-version">{version}</span></> : null}
+        </span>
+        {queue ? <span className="queue-completed" title={t('progress.completed', { completed: queue.completed, total: queue.total })}>
+          {t('progress.count', { completed: queue.completed, total: queue.total })}
+        </span> : null}
+      </div>
       <div
         className={isDeterminate ? 'progress-track determinate' : 'progress-track'}
         role="progressbar"
@@ -349,6 +343,7 @@ function ProgressBanner({ active, label, progress, queue, operation, t }) {
         aria-valuemin={0}
         aria-valuemax={100}
         aria-valuenow={isDeterminate ? progress : undefined}
+        aria-hidden={!active}
       >
         <span style={isDeterminate ? { width: `${Math.min(progress, 100)}%` } : undefined} />
       </div>
@@ -584,7 +579,7 @@ export default function App() {
         : activeOperation === 'reinstall'
           ? t('progress.reinstalling')
           : t('progress.updating')
-      : t('progress.syncing');
+      : loading ? t('progress.syncing') : t('progress.ready');
   const requiresAdminFailure = packages.some(
     (item) => item.status === 'failed' && failureKindFor(item) === 'requires-admin'
   );
@@ -1172,12 +1167,6 @@ export default function App() {
               </p>
             </div>
             <div className="header-actions">
-              {running || loading ? (
-                <button className="button danger" onClick={cancelUpdates}>
-                  <X size={17} />
-                  {t('actions.cancel')}
-                </button>
-              ) : null}
               <button className="button secondary" onClick={refreshList} disabled={busy}>
                 <RefreshCw size={17} className={loading ? 'spin' : ''} />
                 {t('actions.refresh')}
@@ -1236,7 +1225,7 @@ export default function App() {
             </div>
           </section>
 
-          <div className={running ? 'operation-progress' : 'floating-progress'}>
+          <div className="operation-progress">
             <ProgressBanner
               active={progressActive}
               label={progressLabel}
@@ -1245,6 +1234,16 @@ export default function App() {
               operation={activeOperation}
               t={t}
             />
+            <button
+              className="button danger progress-cancel"
+              onClick={cancelUpdates}
+              disabled={!running && !loading}
+              aria-hidden={!running && !loading}
+              style={{ visibility: running || loading ? 'visible' : 'hidden' }}
+            >
+              <X size={17} />
+              {t('actions.cancel')}
+            </button>
           </div>
 
           <section className="command-strip" aria-label={t('aria.listTools')}>

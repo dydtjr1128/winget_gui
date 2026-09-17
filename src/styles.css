@@ -405,6 +405,12 @@ button {
   justify-content: space-between;
   gap: 24px;
   min-height: 48px;
+  flex-wrap: wrap;
+}
+
+.workspace-header > div:first-child {
+  flex: 1 1 240px;
+  min-width: 0;
 }
 
 .heading-row {
@@ -441,7 +447,8 @@ button {
   gap: 10px;
   flex-wrap: wrap;
   justify-content: flex-end;
-  flex-shrink: 0;
+  flex: 1 1 560px;
+  min-width: 0;
 }
 
 .button {
@@ -698,66 +705,72 @@ button {
 
 .progress-banner {
   display: grid;
-  gap: 7px;
-  min-height: 42px;
-  padding: 8px 12px;
-  border: 1px solid var(--hairline);
-  border-radius: var(--radius-lg);
-  background: var(--canvas);
-  animation: panel-in 0.18s ease-out both;
+  grid-template-rows: 18px 16px 4px;
+  gap: 4px;
+  min-width: 0;
 }
 
 .operation-progress {
   grid-area: progress;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 92px;
+  align-items: center;
+  gap: 12px;
+  height: 64px;
+  padding: 8px 12px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-lg);
+  background: var(--canvas);
   min-width: 0;
 }
 
-.current-package {
+.progress-copy > span {
   display: flex;
   align-items: center;
-  flex-wrap: wrap;
-  gap: 10px;
-  color: var(--primary);
-}
-
-.current-package > div {
-  flex: 1;
   min-width: 0;
-  display: grid;
-  gap: 3px;
-  overflow-wrap: anywhere;
+  gap: 6px;
+  white-space: nowrap;
+  overflow: hidden;
 }
 
-.current-package strong { font-size: 15px; }
-
-.current-package > div > span,
-.current-package-version,
+.progress-copy svg,
+.operation-label,
 .queue-completed {
+  flex-shrink: 0;
+}
+
+.progress-detail {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
   color: var(--body-muted);
-  font-size: 12px;
-  overflow-wrap: anywhere;
+  font-size: 11px;
+}
+
+.current-package strong,
+.package-detail {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.progress-banner[data-active="false"] .progress-track {
+  visibility: hidden;
+}
+
+.progress-banner[data-active="false"] .progress-track span {
+  animation: none;
+}
+
+.progress-cancel {
+  width: 92px;
 }
 
 tbody tr.row-running.selected-row,
 tbody tr.row-running {
   background: #eaf3ff;
   box-shadow: inset 3px 0 0 var(--primary);
-}
-
-.floating-progress {
-  position: absolute;
-  top: 10px;
-  left: 50%;
-  z-index: 5;
-  width: min(348px, calc(100% - 590px));
-  min-width: 260px;
-  pointer-events: none;
-  transform: translateX(-50%);
-}
-
-.floating-progress .progress-banner {
-  border-color: rgba(0, 0, 0, 0.08);
-  box-shadow: 0 12px 34px rgba(0, 0, 0, 0.16);
 }
 
 .progress-copy {
@@ -1452,15 +1465,6 @@ td:nth-child(7) {
     flex-direction: column;
   }
 
-  .floating-progress {
-    top: 70px;
-    left: 12px;
-    right: 12px;
-    width: calc(100% - 24px);
-    min-width: 0;
-    transform: none;
-  }
-
   .count-alert {
     white-space: normal;
   }
@@ -1468,6 +1472,11 @@ td:nth-child(7) {
   .header-actions {
     width: 100%;
     flex-wrap: wrap;
+    flex-basis: auto;
+  }
+
+  .workspace-header > div:first-child {
+    flex-basis: auto;
   }
 
   .button {
