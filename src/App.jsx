@@ -27,6 +27,7 @@ import {
 } from './i18n.mjs';
 import LogPanel from './LogPanel.jsx';
 import { logStore } from './logStore.mjs';
+import { getQueueProgress } from './queueProgress.mjs';
 
 const api = window.wingetApi ?? null;
 const windowApi = window.windowApi ?? {
@@ -308,7 +309,7 @@ function BrandLogo({ compact = false }) {
   );
 }
 
-function ProgressBanner({ active, label, progress }) {
+function ProgressBanner({ active, label, progress, queue, operation, t }) {
   if (!active) {
     return null;
   }
@@ -321,7 +322,34 @@ function ProgressBanner({ active, label, progress }) {
         <span>{label}</span>
         {isDeterminate ? <strong>{Math.min(progress, 100)}%</strong> : null}
       </div>
-      <div className={isDeterminate ? 'progress-track determinate' : 'progress-track'}>
+      {queue ? (
+        <>
+          <div className="current-package">
+            <Loader2 size={20} className="spin" aria-hidden="true" />
+            <div>
+              <strong>{queue.current
+                ? t('progress.current', { position: queue.position, total: queue.total, name: queue.current.name || queue.current.id })
+                : t('progress.preparing')}</strong>
+              {queue.current ? <span className="mono">{queue.current.id}</span> : null}
+            </div>
+            {queue.current?.installedVersion ? (
+              <span className="current-package-version mono">
+                {queue.current.installedVersion}
+                {operation !== 'uninstall' && queue.current.availableVersion ? ` → ${queue.current.availableVersion}` : ''}
+              </span>
+            ) : null}
+          </div>
+          <span className="queue-completed">{t('progress.completed', { completed: queue.completed, total: queue.total })}</span>
+        </>
+      ) : null}
+      <div
+        className={isDeterminate ? 'progress-track determinate' : 'progress-track'}
+        role="progressbar"
+        aria-label={queue ? t('progress.queue') : label}
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuenow={isDeterminate ? progress : undefined}
+      >
         <span style={isDeterminate ? { width: `${Math.min(progress, 100)}%` } : undefined} />
       </div>
     </div>
@@ -392,7 +420,6 @@ export default function App() {
   const [isElevated, setIsElevated] = useState(false);
   const [lastLoadedAt, setLastLoadedAt] = useState('');
   const [listMeta, setListMeta] = useState(emptyListMeta);
-  const [activeQueueTotal, setActiveQueueTotal] = useState(0);
   const [activeQueueIds, setActiveQueueIds] = useState([]);
   const [options, setOptions] = useState({
     silent: true,
@@ -545,13 +572,7 @@ export default function App() {
   const pendingCount = Math.max(packages.length - finishedCount - failedCount, 0);
   const wingetCount = listMeta.declaredUpgradeCount ?? packages.length;
   const unknownVersionCount = listMeta.unknownVersionCount ?? 0;
-  const activeQueueIdSet = useMemo(() => new Set(activeQueueIds), [activeQueueIds]);
-  const activeQueueCompleted = packages.filter(
-    (item) =>
-      activeQueueIdSet.has(item.id) && (item.status === 'success' || item.status === 'failed')
-  ).length;
-  const queueProgress =
-    activeQueueTotal > 0 ? Math.round((activeQueueCompleted / activeQueueTotal) * 100) : null;
+  const queue = getQueueProgress(packages, activeQueueIds);
   const running = Boolean(activeOperation);
   const busy = loading || running || elevating;
   const progressActive = loading || running || elevating;
@@ -645,7 +666,6 @@ export default function App() {
           setPackages((current) => current.filter((pkg) => !removedIds.has(pkg.id)));
         }
         setActiveOperation(null);
-        setActiveQueueTotal(0);
         setActiveQueueIds([]);
       })
     ];
@@ -687,7 +707,6 @@ export default function App() {
           failurePhase: ''
         }))
       );
-      setActiveQueueTotal(0);
       setActiveQueueIds([]);
       setListMeta({
         declaredUpgradeCount:
@@ -840,7 +859,6 @@ export default function App() {
 
     const idSet = new Set(ids);
     setActiveOperation('upgrade');
-    setActiveQueueTotal(ids.length);
     setActiveQueueIds(ids);
     setPackages((current) =>
       current.map((item) =>
@@ -858,7 +876,6 @@ export default function App() {
       addLog(error.message);
     } finally {
       setActiveOperation(null);
-      setActiveQueueTotal(0);
       setActiveQueueIds([]);
     }
   }
@@ -882,7 +899,6 @@ export default function App() {
 
     const idSet = new Set(ids);
     setActiveOperation('uninstall');
-    setActiveQueueTotal(ids.length);
     setActiveQueueIds(ids);
     setPackages((current) =>
       current.map((item) =>
@@ -903,7 +919,6 @@ export default function App() {
       addLog(error.message);
     } finally {
       setActiveOperation(null);
-      setActiveQueueTotal(0);
       setActiveQueueIds([]);
     }
   }
@@ -935,7 +950,6 @@ export default function App() {
 
     const idSet = new Set(ids);
     setActiveOperation('reinstall');
-    setActiveQueueTotal(ids.length);
     setActiveQueueIds(ids);
     setPackages((current) =>
       current.map((item) =>
@@ -956,7 +970,6 @@ export default function App() {
       addLog(error.message);
     } finally {
       setActiveOperation(null);
-      setActiveQueueTotal(0);
       setActiveQueueIds([]);
     }
   }
@@ -985,7 +998,6 @@ export default function App() {
     await api.cancelUpgrade();
     addLog(tRef.current('logs.cancelRequested'));
     setActiveOperation(null);
-    setActiveQueueTotal(0);
     setActiveQueueIds([]);
   }
 
@@ -1224,11 +1236,14 @@ export default function App() {
             </div>
           </section>
 
-          <div className="floating-progress">
+          <div className={running ? 'operation-progress' : 'floating-progress'}>
             <ProgressBanner
               active={progressActive}
               label={progressLabel}
-              progress={running ? queueProgress : null}
+              progress={running ? queue.percent : null}
+              queue={running ? queue : null}
+              operation={activeOperation}
+              t={t}
             />
           </div>
 
@@ -1280,6 +1295,7 @@ export default function App() {
                     key={item.id}
                     className={[
                       item.selected ? 'selected-row' : '',
+                      running && queue.current?.id === item.id ? 'row-running' : '',
                       item.idResolutionStatus === 'unresolved' ? 'blocked-row' : '',
                       item.status === 'success' ? 'row-success' : '',
                       item.status === 'failed' ? 'row-failed' : ''

@@ -388,10 +388,11 @@ button {
   display: grid;
   grid-template-areas:
     "header"
+    "progress"
     "tools"
     "table"
     "logs";
-  grid-template-rows: auto auto minmax(0, 1fr) 220px;
+  grid-template-rows: auto auto auto minmax(0, 1fr) 220px;
   gap: 8px;
   min-width: 0;
   min-height: 0;
@@ -704,6 +705,43 @@ button {
   border-radius: var(--radius-lg);
   background: var(--canvas);
   animation: panel-in 0.18s ease-out both;
+}
+
+.operation-progress {
+  grid-area: progress;
+  min-width: 0;
+}
+
+.current-package {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  color: var(--primary);
+}
+
+.current-package > div {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+  overflow-wrap: anywhere;
+}
+
+.current-package strong { font-size: 15px; }
+
+.current-package > div > span,
+.current-package-version,
+.queue-completed {
+  color: var(--body-muted);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+tbody tr.row-running.selected-row,
+tbody tr.row-running {
+  background: #eaf3ff;
+  box-shadow: inset 3px 0 0 var(--primary);
 }
 
 .floating-progress {
@@ -1396,7 +1434,7 @@ td:nth-child(7) {
   }
 
   .workspace {
-    grid-template-rows: auto auto minmax(0, 1fr) 190px;
+    grid-template-rows: auto auto auto minmax(0, 1fr) 190px;
     padding: 16px 12px 12px;
   }
 
