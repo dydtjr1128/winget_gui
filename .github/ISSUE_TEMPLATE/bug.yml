@@ -1,0 +1,55 @@
+name: 결함 보고
+description: 오동작이나 회귀를 재현 정보와 함께 등록
+body:
+  - type: textarea
+    id: summary
+    attributes:
+      label: 요약
+      description: 짧은 불릿 2~3개, 명사형·단답형 종결. 상세 설명과 로그는 아래에 작성
+      placeholder: |
+        - 설정 저장 후 언어 선택 초기화
+        - 다시 접속할 때마다 언어 재설정 필요
+    validations:
+      required: true
+  - type: markdown
+    attributes:
+      value: '제목은 대상과 증상을 짧게 표현. 예: 설정 저장 후 언어 선택 초기화. 요약에 ~합니다·~습니다·~한다 등 서술형 종결 생략.'
+  - type: textarea
+    id: behavior
+    attributes:
+      label: 현재 동작과 기대 동작
+      placeholder: |
+        - 현재 동작:
+        - 기대 동작:
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: 재현 방법 또는 증거
+      description: 최소 재현 단계와 결과. 재현이 어려우면 관찰 시점·빈도·확인한 증거 기재
+      placeholder: |
+        1. 실행 환경 또는 입력 준비
+        2. 문제가 발생하는 작업 수행
+        3. 결과 확인
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: 환경
+      description: 관련 버전·커밋, 운영체제·브라우저 등. 모르는 항목은 미확인으로 표시
+    validations:
+      required: true
+  - type: textarea
+    id: impact
+    attributes:
+      label: 영향과 참고 자료 (선택)
+      description: 영향 범위, 우회 방법, 로그·스크린샷, 관련 이슈. 비밀키와 개인정보 제거
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: 완료 조건 (선택)
+      placeholder: |
+        - [ ] 재현 단계에서 기대 동작 확인
+        - [ ] 기존 정상 동작 유지
