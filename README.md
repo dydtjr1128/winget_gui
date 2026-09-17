@@ -83,6 +83,32 @@ When winget reports that a package's install technology changed (so an in-place 
 npm test
 ```
 
+For the Electron progress UI smoke check on Windows:
+
+```powershell
+npm run build
+node_modules/.bin/electron.cmd tests/electron-progress-smoke.cjs --dist
+```
+
+This opens the real desktop UI with a test runner; it does not install or remove
+packages. Add `--real-list` to check actual winget list retrieval. The desktop
+smoke check is separate from `npm test`.
+
+## Contributing
+
+Read [AGENTS.md](AGENTS.md) for project-specific validation, issue/PR, and release
+rules. [CLAUDE.md](CLAUDE.md) imports the same instructions.
+
+Choose the bug, change, or question form when opening an issue. Pull requests
+use the repository template for the summary, changes, acceptance criteria,
+verification, impact, and remaining limitations. Issue and PR descriptions are
+written in Korean with a short summary at the top.
+
+The common guidelines and forms are adapted from
+[Project Starter Kit](https://github.com/dydtjr1128/project-starter-kit/tree/f39b580c4a836fc5e13527eb45fdcc63d3e0f1e4/templates/common).
+They are maintained as local copies; compare upstream changes and preserve this
+project's Electron validation and release rules when updating them.
+
 ## Project layout
 
 ```text

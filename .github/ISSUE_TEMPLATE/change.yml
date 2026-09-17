@@ -1,0 +1,45 @@
+name: 기능·개선 제안
+description: 기능, 성능, 리팩터링 또는 문서 개선 제안
+body:
+  - type: textarea
+    id: summary
+    attributes:
+      label: 요약
+      description: 짧은 불릿 2~3개, 명사형·단답형 종결. 배경과 구현 상세는 아래에 작성
+      placeholder: |
+        - 검색 결과 정렬 옵션 부재
+        - 최신순·이름순 정렬 추가로 탐색 편의 개선
+    validations:
+      required: true
+  - type: markdown
+    attributes:
+      value: '제목은 대상과 원하는 변경을 짧게 표현. 예: 검색 결과 정렬 옵션 추가. 요약에 ~합니다·~습니다·~한다 등 서술형 종결 생략.'
+  - type: textarea
+    id: motivation
+    attributes:
+      label: 배경과 필요성
+      description: 누가 어떤 상황에서 겪는 불편인지, 현재 방법의 한계 설명
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: 원하는 변경과 범위
+      description: 기대 동작과 이번 작업에 포함할 범위. 필요한 경우 제외 범위 명시
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: 완료 조건
+      description: 구현 방법보다 확인 가능한 결과를 체크박스로 작성
+      placeholder: |
+        - [ ] 최신순·이름순 선택 가능
+        - [ ] 정렬 변경 후 기존 검색 조건 유지
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: 대안과 참고 자료 (선택)
+      description: 기존 기능 활용 가능성, 대안, 관련 이슈·문서, 호환성 영향
