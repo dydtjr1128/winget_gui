@@ -2,9 +2,11 @@
 
 An Electron desktop app that puts a GUI on top of Windows `winget`, so you can pick exactly which packages to update instead of upgrading everything at once.
 
-![Winget GUI 패키지 목록 화면](docs/images/winget-gui-package-list.png)
-
 ![Winget GUI 업데이트 진행 화면](docs/images/winget-gui-update-progress.png)
+
+The update banner shows the current package, version change, and overall queue
+progress. The cancel button and raw `winget` log stay visible while an update is
+running.
 
 ## Features
 
