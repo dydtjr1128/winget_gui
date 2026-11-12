@@ -29,6 +29,7 @@ const {
   buildSearchArgs,
   buildExportArgs,
   buildUpgradeArgs,
+  buildUpgradeByNameArgs,
   buildInstallArgs,
   buildUninstallArgs,
   buildEnableHashOverrideArgs,
@@ -384,20 +385,36 @@ function createWingetRunner({ spawn: spawnImpl = spawn } = {}) {
           continue;
         }
 
-        const args = buildUpgradeArgs(item.id, { ...options, source: item.source });
-        const result = await runWinget(args);
-        const failureDetail = summarizeWingetFailure(result);
+        const upgradeOptions = { ...options, source: item.source };
+        let result = await runWinget(buildUpgradeArgs(item.id, upgradeOptions));
+        let failureKind = classifyWingetFailure(result);
+        let retriedByName = false;
+
+        // winget's id lookup can miss an installed package that its exact-name
+        // lookup still finds, so retry once by the listed name. Skipped when
+        // the name is missing or truncated (an exact match would be wrong).
+        const name = typeof item.name === 'string' ? item.name.trim() : '';
+        if (failureKind === 'not-found' && !cancelled && name && !hasTruncatedMarker(name)) {
+          events.emit('log', `ID로 설치된 패키지를 찾지 못해 이름으로 다시 시도합니다: ${name}`);
+          result = await runWinget(buildUpgradeByNameArgs(name, upgradeOptions));
+          failureKind = classifyWingetFailure(result);
+          retriedByName = true;
+        }
+
         const itemResult = {
           id: item.id,
           name: item.name,
           operation: 'upgrade',
           ok: result.ok,
           code: result.code,
-          failureKind: classifyWingetFailure(result),
-          failureDetail,
+          failureKind,
+          failureDetail: summarizeWingetFailure(result),
           stdout: result.stdout,
           stderr: result.stderr
         };
+        if (retriedByName) {
+          itemResult.retriedByName = true;
+        }
         results.push(itemResult);
         events.emit('package-complete', itemResult);
       }

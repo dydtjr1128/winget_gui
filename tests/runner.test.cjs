@@ -133,6 +133,108 @@ test('upgradeSelected pins each package to the source it was listed from', async
   assert.equal(results.every((item) => item.ok), true);
 });
 
+const NOT_FOUND_OUTPUT = 'No installed package found matching input criteria.';
+
+function makeNotFoundByIdSpawn(calls, { nameResultCode = 0 } = {}) {
+  return (_cmd, args) => {
+    calls.push(args);
+    const child = makeFakeChild();
+    setImmediate(() => {
+      if (args[1] === '--id') {
+        child.stdout.emit('data', Buffer.from(NOT_FOUND_OUTPUT));
+        child.emit('close', 0x8a150014 | 0);
+        return;
+      }
+      if (nameResultCode !== 0) {
+        child.stdout.emit('data', Buffer.from(NOT_FOUND_OUTPUT));
+      }
+      child.emit('close', nameResultCode);
+    });
+    return child;
+  };
+}
+
+test('upgradeSelected retries by exact name when winget cannot find the package by id', async () => {
+  const calls = [];
+  const logs = [];
+  const runner = createWingetRunner({ spawn: makeNotFoundByIdSpawn(calls) });
+  runner.events.on('log', (line) => logs.push(line));
+
+  const results = await runner.upgradeSelected(
+    [{ id: 'Microsoft.PowerShell', name: 'PowerShell 7.6.10.0-x64', source: 'winget' }],
+    { silent: true }
+  );
+
+  assert.equal(calls.length, 2);
+  assert.deepEqual(calls[1], [
+    'upgrade',
+    '--name',
+    'PowerShell 7.6.10.0-x64',
+    '--exact',
+    '--accept-package-agreements',
+    '--accept-source-agreements',
+    '--disable-interactivity',
+    '--source',
+    'winget',
+    '--silent'
+  ]);
+  assert.equal(results[0].ok, true);
+  assert.equal(results[0].failureKind, '');
+  assert.equal(results[0].retriedByName, true);
+  assert.ok(logs.some((line) => typeof line === 'string' && line.includes('이름으로 다시 시도')));
+});
+
+test('upgradeSelected keeps the not-found result when the name retry also fails', async () => {
+  const calls = [];
+  const runner = createWingetRunner({ spawn: makeNotFoundByIdSpawn(calls, { nameResultCode: 1 }) });
+
+  const results = await runner.upgradeSelected(
+    [{ id: 'Microsoft.PowerShell', name: 'PowerShell 7.6.10.0-x64', source: 'winget' }],
+    {}
+  );
+
+  assert.equal(calls.length, 2);
+  assert.equal(results[0].ok, false);
+  assert.equal(results[0].failureKind, 'not-found');
+  assert.equal(results[0].retriedByName, true);
+});
+
+test('upgradeSelected skips the name retry when the name is missing or truncated', async () => {
+  const calls = [];
+  const runner = createWingetRunner({ spawn: makeNotFoundByIdSpawn(calls) });
+
+  const results = await runner.upgradeSelected(
+    [
+      { id: 'Some.Package', name: '', source: 'winget' },
+      { id: 'Other.Package', name: 'Very Long Package Na…', source: 'winget' }
+    ],
+    {}
+  );
+
+  assert.equal(calls.length, 2);
+  assert.ok(calls.every((args) => args[1] === '--id'));
+  assert.ok(results.every((item) => item.failureKind === 'not-found' && !item.retriedByName));
+});
+
+test('upgradeSelected does not retry by name for failures other than not-found', async () => {
+  const calls = [];
+  const fakeSpawn = (_cmd, args) => {
+    calls.push(args);
+    const child = makeFakeChild();
+    setImmediate(() => {
+      child.stdout.emit('data', Buffer.from('Installer failed with exit code: 1603'));
+      child.emit('close', 1);
+    });
+    return child;
+  };
+  const runner = createWingetRunner({ spawn: fakeSpawn });
+
+  const results = await runner.upgradeSelected([{ id: 'Git.Git', name: 'Git', source: 'winget' }], {});
+
+  assert.equal(calls.length, 1);
+  assert.equal(results[0].failureKind, 'installer');
+});
+
 test('uninstallSelected runs exact-id winget uninstall and reports operation events', async () => {
   const calls = [];
   const starts = [];
