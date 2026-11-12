@@ -17,6 +17,7 @@ module.exports = {
   buildSearchArgs: args.buildSearchArgs,
   buildUninstallArgs: args.buildUninstallArgs,
   buildUpgradeArgs: args.buildUpgradeArgs,
+  buildUpgradeByNameArgs: args.buildUpgradeByNameArgs,
   classifyWingetFailure: parser.classifyWingetFailure,
   createTerminalLogProcessor: parser.createTerminalLogProcessor,
   createWingetRunner,

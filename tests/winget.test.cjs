@@ -9,6 +9,7 @@ const {
   buildSearchArgs,
   buildUninstallArgs,
   buildUpgradeArgs,
+  buildUpgradeByNameArgs,
   classifyWingetFailure,
   createTerminalLogProcessor,
   decodeWingetExportBuffer,
@@ -291,6 +292,22 @@ test('pins the package source in upgrade arguments when known', () => {
     'winget',
     '--silent'
   ]);
+});
+
+test('builds exact-name upgrade arguments with the same options as the id form', () => {
+  assert.deepEqual(buildUpgradeByNameArgs('PowerShell 7.6.10.0-x64', { source: 'winget', silent: true }), [
+    'upgrade',
+    '--name',
+    'PowerShell 7.6.10.0-x64',
+    '--exact',
+    '--accept-package-agreements',
+    '--accept-source-agreements',
+    '--disable-interactivity',
+    '--source',
+    'winget',
+    '--silent'
+  ]);
+  assert.throws(() => buildUpgradeByNameArgs(''), /package name is required/);
 });
 
 test('omits --source from upgrade arguments when the source is unknown', () => {

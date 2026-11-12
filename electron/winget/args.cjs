@@ -66,10 +66,25 @@ function buildUpgradeArgs(id, options = {}) {
     throw new Error('A package id is required.');
   }
 
+  return buildUpgradeArgsFor('--id', id, options);
+}
+
+// Exact-name upgrade, used only as a retry when winget's id lookup misses an
+// installed package that its name lookup still finds (seen with
+// Microsoft.PowerShell on winget 1.29: `list --id` fails, `list --name` works).
+function buildUpgradeByNameArgs(name, options = {}) {
+  if (!name || typeof name !== 'string') {
+    throw new Error('A package name is required.');
+  }
+
+  return buildUpgradeArgsFor('--name', name, options);
+}
+
+function buildUpgradeArgsFor(selectorFlag, value, options) {
   const args = [
     'upgrade',
-    '--id',
-    id,
+    selectorFlag,
+    value,
     '--exact',
     '--accept-package-agreements',
     '--accept-source-agreements',
@@ -176,6 +191,7 @@ module.exports = {
   buildListByIdArgs,
   buildExportArgs,
   buildUpgradeArgs,
+  buildUpgradeByNameArgs,
   buildInstallArgs,
   buildUninstallArgs,
   buildEnableHashOverrideArgs,
