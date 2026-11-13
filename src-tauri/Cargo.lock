@@ -4297,6 +4297,7 @@ dependencies = [
  "tauri-build",
  "tauri-plugin-window-state",
  "unicode-normalization",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

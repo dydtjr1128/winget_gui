@@ -106,14 +106,38 @@ fn cancel_upgrade(state: State<'_, AppState>) -> bool {
     true
 }
 
+/// Reads TokenElevation from this process's token: no child process, no delay.
+#[cfg(windows)]
 fn running_elevated() -> bool {
-    hidden_command("net")
-        .arg("session")
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false)
+    use windows_sys::Win32::Foundation::{CloseHandle, HANDLE};
+    use windows_sys::Win32::Security::{GetTokenInformation, TokenElevation, TOKEN_ELEVATION, TOKEN_QUERY};
+    use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
+
+    // SAFETY: the token handle is opened for this process only, checked before
+    // use and closed once; TOKEN_ELEVATION is a plain u32 struct whose exact
+    // size is passed to GetTokenInformation.
+    unsafe {
+        let mut token: HANDLE = std::ptr::null_mut();
+        if OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) == 0 {
+            return false;
+        }
+        let mut elevation = TOKEN_ELEVATION { TokenIsElevated: 0 };
+        let mut returned = 0u32;
+        let ok = GetTokenInformation(
+            token,
+            TokenElevation,
+            (&mut elevation as *mut TOKEN_ELEVATION).cast(),
+            std::mem::size_of::<TOKEN_ELEVATION>() as u32,
+            &mut returned,
+        );
+        CloseHandle(token);
+        ok != 0 && elevation.TokenIsElevated != 0
+    }
+}
+
+#[cfg(not(windows))]
+fn running_elevated() -> bool {
+    false
 }
 
 #[tauri::command]
@@ -176,4 +200,22 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(all(test, windows))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn token_elevation_matches_net_session() {
+        // `net session` succeeds only for an elevated administrator.
+        let net_session = hidden_command("net")
+            .arg("session")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+        assert_eq!(running_elevated(), net_session);
+    }
 }

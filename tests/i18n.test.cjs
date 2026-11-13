@@ -38,6 +38,15 @@ test('normalizes regional language tags to bundled UI locales', async () => {
   assert.equal(normalizeLocale('zh-CN'), 'en');
 });
 
+test('provides the cached-list notice in both locales', async () => {
+  const { createTranslator, formatDateTimeLabel } = await loadI18n();
+  const time = formatDateTimeLabel(new Date(2026, 10, 13, 9, 58), 'en');
+
+  assert.match(time, /Nov/);
+  assert.match(createTranslator('en').t('alerts.cachedList', { time }), /^List from Nov/);
+  assert.match(createTranslator('ko').t('alerts.cachedList', { time: 'X' }), /^X 기준 이전 목록/);
+});
+
 test('translates UI labels and interpolates counts', async () => {
   const { createTranslator } = await loadI18n();
   const { t } = createTranslator('en-US');

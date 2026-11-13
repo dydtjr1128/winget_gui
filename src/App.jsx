@@ -21,6 +21,7 @@ import logoUrl from './assets/winget-gui-logo.png';
 import {
   createTranslator,
   defaultLanguagePreference,
+  formatDateTimeLabel,
   formatTimeLabel,
   languagePreferences,
   resolveLocalePreference
@@ -28,6 +29,7 @@ import {
 import LogPanel from './LogPanel.jsx';
 import { logStore } from './logStore.mjs';
 import { getQueueProgress } from './queueProgress.mjs';
+import { readListCache, writeListCache } from './listCache.mjs';
 
 const api = window.wingetApi ?? null;
 const windowApi = window.windowApi ?? {
@@ -92,6 +94,18 @@ function writeStoredLanguagePreference(preference) {
   } catch {
     // Keep the selected language for this session even when persistence is unavailable.
   }
+}
+
+function toIdlePackage(item) {
+  return {
+    ...item,
+    selected: false,
+    status: 'idle',
+    lastAction: '',
+    failureKind: '',
+    failureDetail: '',
+    failurePhase: ''
+  };
 }
 
 function nowLabel(locale) {
@@ -405,7 +419,18 @@ export default function App() {
   const tRef = useRef(t);
   const lastSelectedId = useRef(null);
   const shortcutsRef = useRef({});
-  const [packages, setPackages] = useState([]);
+  // Options start at their defaults, so the cache is read with those.
+  const [initialCache] = useState(() =>
+    readListCache({ includeUnknown: false, includePinned: false })
+  );
+  const [packages, setPackages] = useState(() =>
+    (initialCache?.packages ?? []).map(toIdlePackage)
+  );
+  // True while the table shows the previous launch's list and the first
+  // refresh has not finished yet.
+  const [showingCached, setShowingCached] = useState(
+    () => (initialCache?.packages.length ?? 0) > 0
+  );
   const [query, setQuery] = useState('');
   const [loading, setLoading] = useState(false);
   const [activeOperation, setActiveOperation] = useState(null);
@@ -414,7 +439,16 @@ export default function App() {
   const [elevating, setElevating] = useState(false);
   const [isElevated, setIsElevated] = useState(false);
   const [lastLoadedAt, setLastLoadedAt] = useState('');
-  const [listMeta, setListMeta] = useState(emptyListMeta);
+  const [listMeta, setListMeta] = useState(() =>
+    initialCache
+      ? {
+          ...emptyListMeta,
+          declaredUpgradeCount: initialCache.declaredUpgradeCount,
+          unknownVersionCount: initialCache.unknownVersionCount,
+          parsedCount: initialCache.packages.length
+        }
+      : emptyListMeta
+  );
   const [activeQueueIds, setActiveQueueIds] = useState([]);
   const [options, setOptions] = useState({
     silent: true,
@@ -691,19 +725,10 @@ export default function App() {
         includePinned: options.includePinned
       });
       const nextPackages = Array.isArray(result.packages) ? result.packages : [];
-      setPackages(
-        nextPackages.map((item) => ({
-          ...item,
-          selected: false,
-          status: 'idle',
-          lastAction: '',
-          failureKind: '',
-          failureDetail: '',
-          failurePhase: ''
-        }))
-      );
+      setPackages(nextPackages.map(toIdlePackage));
+      setShowingCached(false);
       setActiveQueueIds([]);
-      setListMeta({
+      const nextMeta = {
         declaredUpgradeCount:
           typeof result.declaredUpgradeCount === 'number' ? result.declaredUpgradeCount : null,
         unknownVersionCount:
@@ -711,8 +736,12 @@ export default function App() {
         parsedCount: typeof result.parsedCount === 'number' ? result.parsedCount : nextPackages.length,
         countMismatch: Boolean(result.countMismatch),
         wingetMissing: Boolean(result.wingetMissing)
-      });
+      };
+      setListMeta(nextMeta);
       setLastLoadedAt(nowLabel(localeRef.current));
+      if (result.ok && !result.wingetMissing) {
+        writeListCache({ packages: nextPackages, listMeta: nextMeta, options, savedAt: Date.now() });
+      }
       if (result.wingetMissing) {
         addLog(tRef.current('logs.wingetMissing'));
       } else if (!result.ok) {
@@ -735,6 +764,11 @@ export default function App() {
     } catch (error) {
       addLog(error.message);
       setListMeta(emptyListMeta);
+      // Never leave a stale list looking current after a failed refresh.
+      if (showingCached) {
+        setPackages([]);
+        setShowingCached(false);
+      }
     } finally {
       setLoading(false);
     }
@@ -1149,6 +1183,16 @@ export default function App() {
             <div>
               <div className="heading-row">
                 <h2>{t('workspace.title')}</h2>
+                {showingCached && initialCache ? (
+                  <div className="count-alert" role="status">
+                    <RefreshCw size={15} className={loading ? 'spin' : ''} />
+                    <span>
+                      {t('alerts.cachedList', {
+                        time: formatDateTimeLabel(new Date(initialCache.savedAt), activeLocale)
+                      })}
+                    </span>
+                  </div>
+                ) : null}
                 {countAlert && !progressActive ? (
                   <div className="count-alert" role="status">
                     <CircleAlert size={15} />
