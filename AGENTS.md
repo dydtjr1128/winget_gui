@@ -47,16 +47,15 @@
 
 ## 프로젝트 개요 & 검증 방법
 
-- Electron 데스크톱 앱이다. 브라우저 단독 웹앱이 아니다.
-- 실제 `winget` 동작은 Electron 메인 프로세스와 preload IPC를 통해서만 가능하다.
-- 기능 검증은 `npm run dev:app`, `npm start`, 또는 `release\Winget GUI Portable\Winget GUI.exe` 로 한다.
+- Tauri 2 데스크톱 앱이다(Rust 백엔드 `src-tauri/` + React 렌더러 `src/`). 브라우저 단독 웹앱이 아니다.
+- 실제 `winget` 동작은 Rust 백엔드의 Tauri 명령과 `src/tauriBridge.mjs`를 통해서만 가능하다.
+- 기능 검증은 `npm start`(= `tauri dev`) 또는 `npm run portable`로 만든 `release\Winget-GUI-Portable-<버전>-x64.exe`로 한다. 릴리스 빌드 exe는 관리자 manifest가 들어가 실행 시 UAC가 뜬다.
 - `npm run dev` 와 `dist/index.html` 은 렌더러 레이아웃 확인용이며, winget 목록/업데이트 흐름은 검증할 수 없다.
-- "패키지 업데이트가 동작한다"고 말하기 전에 Windows에서 패키징된 앱(또는 Electron 앱)을 실제 실행해 데스크톱 UI와 로그 흐름을 확인한다.
+- "패키지 업데이트가 동작한다"고 말하기 전에 Windows에서 앱을 실제 실행해 데스크톱 UI와 로그 흐름을 확인한다.
 - 포터블 재빌드: `npm run portable`. 실행 중인 앱이 있으면 파일 잠금으로 실패할 수 있으니 먼저 종료한다.
-- 머지 전 `npm test` 전부 통과가 필수이며, 동작 변경에는 회귀 테스트를 함께 추가한다.
-- 의존성 재현 설치는 `npm ci`, 렌더러 빌드 검사는 `npm run build`를 사용한다.
-- 진행 UI 회귀 검증은 빌드 후 `node_modules/.bin/electron.cmd tests/electron-progress-smoke.cjs --dist`로 실행한다. 기본 모드는 테스트 runner를 사용하며 실제 설치·삭제를 수행하지 않는다. `--real-list`를 추가하면 실제 winget 목록 조회를 확인한다.
-- 수동 Electron 검증 결과와 `npm test` 결과를 구분해 기록한다. 현재 `npm test`에는 Electron 화면 검증이 포함되지 않는다.
+- 머지 전 `npm test`와 `npm run test:rust` 전부 통과가 필수이며, 동작 변경에는 회귀 테스트를 함께 추가한다. Rust 변경은 `cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings`도 통과시킨다.
+- 의존성 재현 설치는 `npm ci`, 렌더러 빌드 검사는 `npm run build`를 사용한다. PR CI(`.github/workflows/ci.yml`)가 Node 테스트·렌더러 빌드·Rust 테스트·clippy·Tauri 빌드를 수행한다.
+- 수동 앱 검증 결과와 자동 테스트 결과를 구분해 기록한다. 현재 자동 테스트에는 데스크톱 화면 검증이 포함되지 않는다.
 
 ## 브랜치 & 워크플로
 
@@ -79,12 +78,13 @@
   1. 수정 PR 스쿼시 머지 후, `npm version <X.Y.Z> --no-git-tag-version` 로 패치 버전을 올리고 `chore: 버전 X.Y.Z로 갱신` 커밋을 별도 PR(스쿼시 머지)로 올린다. 변경 파일은 `package.json` + `package-lock.json`.
   2. 범프 커밋이 `main`에 머지되면 **그 커밋에** lightweight 태그 `vX.Y.Z`를 달고 푸시한다:
      `git tag vX.Y.Z <머지 커밋>` → `git push origin vX.Y.Z`
-- 태그 이후 배포 산출물이 필요하면 `npm run portable` 로 생성한다.
+- `src-tauri/tauri.conf.json`의 `version`은 `../package.json`을 참조하므로 앱 버전은 `package.json`만 올리면 된다.
+- 태그를 푸시하면 Release 워크플로가 포터블 exe와 NSIS 설치 파일을 빌드해 게시한다. 로컬 산출물은 `npm run release:win`(둘 다) 또는 `npm run portable`(exe만)로 `release/`에 생성한다.
 
 ## 코드 구조 메모
 
-- `electron/winget/parser.cjs` 는 순수 함수만 둔다(프로세스/파일시스템 접근 금지) — 단위 테스트 대상.
-- `electron/winget/` 내부의 프로세스/파일시스템 접근은 `runner.cjs`에만 둔다. 창 상태·권한 재시작·패키징 등 별도 책임의 I/O는 해당 모듈이 담당한다.
-- `electron/main.cjs`는 창·IPC 연결, `electron/preload.cjs`는 렌더러 API 경계, `src/App.jsx`는 사용자 작업 흐름을 담당한다.
+- `src-tauri/src/winget/parser.rs`, `resolver.rs`, `args.rs` 는 순수 함수만 둔다(프로세스/파일시스템 접근 금지) — 단위 테스트 대상.
+- winget 프로세스/파일시스템 접근은 `src-tauri/src/winget/runner.rs`에만 둔다. 테스트는 `Runner::with_executor`로 가짜 winget을 주입한다.
+- `src-tauri/src/lib.rs`는 Tauri 명령·상태·권한 재시작, `src/tauriBridge.mjs`는 렌더러 API 경계, `src/App.jsx`는 사용자 작업 흐름을 담당한다.
 - 사용자 노출 문자열은 `src/i18n.mjs` 의 ko/en 두 블록에 항상 쌍으로 추가한다.
 - 소스에 제어 문자를 넣을 때는 `\uXXXX` 리터럴 대신 `String.fromCharCode(...)` 또는 `\xXX` 를 쓴다(기존 관례, 보이지 않는 문자 유입 방지).
