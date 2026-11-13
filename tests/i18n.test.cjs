@@ -47,6 +47,39 @@ test('provides the cached-list notice in both locales', async () => {
   assert.match(createTranslator('ko').t('alerts.cachedList', { time: 'X' }), /^X 기준 이전 목록/);
 });
 
+test('provides the force option and confirmed force install texts in both locales', async () => {
+  const { createTranslator } = await loadI18n();
+  const keys = [
+    'options.force',
+    'tooltips.force',
+    'tooltips.forceInstall',
+    'actions.forceInstall',
+    'actions.confirmForceInstall',
+    'forceInstall.kicker',
+    'forceInstall.title',
+    'forceInstall.description',
+    'forceInstall.warning',
+    'progress.action.force-install',
+    'progress.forceInstalling',
+    'logs.forceInstallStart',
+    'logs.forceInstallComplete',
+    'failure.kind.force-install',
+    'failure.advice.force-install',
+    'failure.summary.force-install'
+  ];
+
+  for (const locale of ['ko', 'en']) {
+    const { t } = createTranslator(locale);
+    for (const key of keys) {
+      assert.notEqual(t(key), key, `${locale}: ${key}`);
+    }
+    assert.match(t('tooltips.force'), /--force/);
+    // The option only adds a flag; the stronger install is a separate, confirmed action.
+    assert.doesNotMatch(t('tooltips.force'), /winget install/);
+    assert.match(t('tooltips.forceInstall'), /winget install --force/);
+  }
+});
+
 test('translates UI labels and interpolates counts', async () => {
   const { createTranslator } = await loadI18n();
   const { t } = createTranslator('en-US');

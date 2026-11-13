@@ -167,6 +167,10 @@ function failureLabelFor(item, t) {
     return t('failure.kind.reinstall');
   }
 
+  if (item.lastAction === 'force-install') {
+    return t('failure.kind.force-install');
+  }
+
   return failureKindLabel(failureKindFor(item), t);
 }
 
@@ -181,6 +185,10 @@ function failureAdviceForItem(item, t) {
         ? 'failure.advice.reinstall-install'
         : 'failure.advice.reinstall-uninstall'
     );
+  }
+
+  if (item.lastAction === 'force-install') {
+    return t('failure.advice.force-install');
   }
 
   return failureAdviceFor(failureKindFor(item), t);
@@ -436,6 +444,7 @@ export default function App() {
   const [activeOperation, setActiveOperation] = useState(null);
   const [uninstallTarget, setUninstallTarget] = useState([]);
   const [reinstallTarget, setReinstallTarget] = useState([]);
+  const [forceInstallTarget, setForceInstallTarget] = useState([]);
   const [elevating, setElevating] = useState(false);
   const [isElevated, setIsElevated] = useState(false);
   const [lastLoadedAt, setLastLoadedAt] = useState('');
@@ -454,7 +463,8 @@ export default function App() {
     silent: true,
     includeUnknown: false,
     includePinned: false,
-    ignoreHash: false
+    ignoreHash: false,
+    force: false
   });
   const [sort, setSort] = useState({ key: null, dir: 'asc' });
 
@@ -506,7 +516,8 @@ export default function App() {
       silent: t('tooltips.silent'),
       includeUnknown: t('tooltips.includeUnknown'),
       includePinned: t('tooltips.includePinned'),
-      ignoreHash: t('tooltips.ignoreHash')
+      ignoreHash: t('tooltips.ignoreHash'),
+      force: t('tooltips.force')
     }),
     [t]
   );
@@ -582,7 +593,18 @@ export default function App() {
       item.status === 'failed' &&
       item.lastAction !== 'uninstall' &&
       item.lastAction !== 'reinstall' &&
+      item.lastAction !== 'force-install' &&
       failureKindFor(item) !== 'install-tech'
+  );
+  // Upgrades winget could not match to the installed copy (not-found, even
+  // after the by-name retry) can be rescued with `winget install --force`,
+  // but only through the confirm dialog — never automatically.
+  const forceInstallCandidates = packages.filter(
+    (item) =>
+      item.status === 'failed' &&
+      item.idResolutionStatus !== 'unresolved' &&
+      (item.lastAction === 'force-install' ||
+        (item.lastAction === 'upgrade' && failureKindFor(item) === 'not-found'))
   );
   const failedUninstalls = packages.filter(
     (item) => item.status === 'failed' && item.lastAction === 'uninstall'
@@ -612,7 +634,9 @@ export default function App() {
         ? t('progress.uninstalling')
         : activeOperation === 'reinstall'
           ? t('progress.reinstalling')
-          : t('progress.updating')
+          : activeOperation === 'force-install'
+            ? t('progress.forceInstalling')
+            : t('progress.updating')
       : loading ? t('progress.syncing') : t('progress.ready');
   const requiresAdminFailure = packages.some(
     (item) => item.status === 'failed' && failureKindFor(item) === 'requires-admin'
@@ -632,8 +656,8 @@ export default function App() {
       const kind =
         item.lastAction === 'uninstall'
           ? 'uninstall'
-          : item.lastAction === 'reinstall'
-            ? 'reinstall'
+          : item.lastAction === 'reinstall' || item.lastAction === 'force-install'
+            ? item.lastAction
             : failureKindFor(item);
       accumulator[kind] = (accumulator[kind] ?? 0) + 1;
       return accumulator;
@@ -990,7 +1014,7 @@ export default function App() {
     addLog(tRef.current('logs.reinstallStart', { count: ids.length }));
 
     try {
-      const results = await api.reinstallSelected(ids, { silent: options.silent });
+      const results = await api.reinstallSelected(ids, { silent: options.silent, force: options.force });
       addLog(tRef.current('logs.reinstallComplete'));
       if (Array.isArray(results) && results.length > 0 && results.every((result) => result.ok)) {
         await refreshList({ force: true });
@@ -1021,6 +1045,51 @@ export default function App() {
     const ids = reinstallTarget.map((item) => item.id);
     setReinstallTarget([]);
     runReinstalls(ids);
+  }
+
+  async function runForceInstalls(ids) {
+    if (ids.length === 0 || busy || !api?.forceInstallSelected) {
+      return;
+    }
+
+    const idSet = new Set(ids);
+    setActiveOperation('force-install');
+    setActiveQueueIds(ids);
+    setPackages((current) =>
+      current.map((item) =>
+        idSet.has(item.id)
+          ? { ...item, status: 'idle', lastAction: 'force-install', failureKind: '', failureDetail: '', failurePhase: '' }
+          : item
+      )
+    );
+    addLog(tRef.current('logs.forceInstallStart', { count: ids.length }));
+
+    try {
+      const results = await api.forceInstallSelected(ids, { silent: options.silent });
+      addLog(tRef.current('logs.forceInstallComplete'));
+      if (Array.isArray(results) && results.length > 0 && results.every((result) => result.ok)) {
+        await refreshList({ force: true });
+      }
+    } catch (error) {
+      addLog(error.message);
+    } finally {
+      setActiveOperation(null);
+      setActiveQueueIds([]);
+    }
+  }
+
+  function requestForceInstall() {
+    if (forceInstallCandidates.length === 0 || busy) {
+      return;
+    }
+
+    setForceInstallTarget(forceInstallCandidates.map(({ id, name, source }) => ({ id, name, source })));
+  }
+
+  function confirmForceInstall() {
+    const ids = forceInstallTarget.map((item) => item.id);
+    setForceInstallTarget([]);
+    runForceInstalls(ids);
   }
 
   async function cancelUpdates() {
@@ -1170,6 +1239,15 @@ export default function App() {
               />
               <span>{t('options.ignoreHash')} <em>(--ignore-security-hash)</em></span>
             </label>
+            <label className="check-option" data-tooltip={optionTooltips.force}>
+              <input
+                type="checkbox"
+                checked={options.force}
+                onChange={() => updateOption('force')}
+                disabled={busy}
+              />
+              <span>{t('options.force')} <em>(--force)</em></span>
+            </label>
           </section>
 
           <div className="sidebar-footer">
@@ -1246,6 +1324,16 @@ export default function App() {
                 >
                   <RotateCcw size={17} />
                   {t('actions.reinstall')} ({reinstallCandidates.length})
+                </button>
+              ) : null}
+              {forceInstallCandidates.length > 0 && !busy ? (
+                <button
+                  className="button warning"
+                  onClick={requestForceInstall}
+                  title={t('tooltips.forceInstall')}
+                >
+                  <Download size={17} />
+                  {t('actions.forceInstall')} ({forceInstallCandidates.length})
                 </button>
               ) : null}
               <button
@@ -1514,6 +1602,64 @@ export default function App() {
               <button className="button warning" onClick={confirmReinstall} autoFocus>
                 <RotateCcw size={17} />
                 {t('actions.confirmReinstall', { count: reinstallTarget.length })}
+              </button>
+            </div>
+          </section>
+        </div>
+      ) : null}
+
+      {forceInstallTarget.length > 0 ? (
+        <div
+          className="dialog-backdrop"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) {
+              setForceInstallTarget([]);
+            }
+          }}
+        >
+          <section
+            className="uninstall-dialog"
+            role="alertdialog"
+            aria-modal="true"
+            aria-labelledby="force-install-dialog-title"
+            aria-describedby="force-install-dialog-description"
+          >
+            <div className="uninstall-dialog-icon" aria-hidden="true">
+              <Download size={23} />
+            </div>
+            <div className="uninstall-dialog-copy">
+              <span className="dialog-kicker">{t('forceInstall.kicker')}</span>
+              <h2 id="force-install-dialog-title">
+                {t('forceInstall.title', { count: forceInstallTarget.length })}
+              </h2>
+              <p id="force-install-dialog-description">{t('forceInstall.description')}</p>
+            </div>
+            <ul className="uninstall-list">
+              {forceInstallTarget.slice(0, 4).map((item) => (
+                <li key={item.id}>
+                  <span>{item.name || item.id}</span>
+                  <code>
+                    winget install --id {item.id} --exact{item.source ? ` --source ${item.source}` : ''} --force
+                  </code>
+                </li>
+              ))}
+              {forceInstallTarget.length > 4 ? (
+                <li className="uninstall-list-more">
+                  {t('uninstall.more', { count: forceInstallTarget.length - 4 })}
+                </li>
+              ) : null}
+            </ul>
+            <div className="uninstall-warning">
+              <CircleAlert size={17} />
+              <span>{t('forceInstall.warning')}</span>
+            </div>
+            <div className="dialog-actions">
+              <button className="button secondary" onClick={() => setForceInstallTarget([])}>
+                {t('actions.keep')}
+              </button>
+              <button className="button warning" onClick={confirmForceInstall} autoFocus>
+                <Download size={17} />
+                {t('actions.confirmForceInstall', { count: forceInstallTarget.length })}
               </button>
             </div>
           </section>

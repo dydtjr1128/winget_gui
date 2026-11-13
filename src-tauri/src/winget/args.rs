@@ -8,6 +8,9 @@ pub struct UpgradeOptions {
     pub include_unknown: bool,
     pub include_pinned: bool,
     pub ignore_hash: bool,
+    /// `--force`: continue past non-security checks (e.g. reinstall the same
+    /// version, or install over a copy `upgrade` cannot match).
+    pub force: bool,
 }
 
 fn s(values: &[&str]) -> Vec<String> {
@@ -79,6 +82,9 @@ fn upgrade_args_for(selector: &str, value: &str, o: &UpgradeOptions) -> Vec<Stri
     if o.ignore_hash {
         args.push("--ignore-security-hash".into());
     }
+    if o.force {
+        args.push("--force".into());
+    }
     args
 }
 
@@ -105,8 +111,14 @@ fn id_command(command: &str, id: &str, source: &str, silent: bool, accept_packag
     args
 }
 
-pub fn install_args(id: &str, source: &str, silent: bool) -> Vec<String> {
-    id_command("install", id, source, silent, true)
+/// Fresh install of the latest version. With `force` it also installs over an
+/// existing copy, which is the fallback for packages `upgrade` cannot match.
+pub fn install_args(id: &str, source: &str, silent: bool, force: bool) -> Vec<String> {
+    let mut args = id_command("install", id, source, silent, true);
+    if force {
+        args.push("--force".into());
+    }
+    args
 }
 
 pub fn uninstall_args(id: &str, source: &str, silent: bool) -> Vec<String> {
@@ -155,7 +167,7 @@ mod tests {
         let args = uninstall_args("Git.Git", "winget", true);
         assert!(!args.contains(&"--accept-package-agreements".to_string()));
         assert!(args.ends_with(&s(&["--source", "winget", "--silent"])));
-        assert!(install_args("Git.Git", "", false).contains(&"--accept-package-agreements".to_string()));
+        assert!(install_args("Git.Git", "", false, false).contains(&"--accept-package-agreements".to_string()));
     }
 
     #[test]
@@ -163,6 +175,32 @@ mod tests {
         let o = UpgradeOptions { ignore_hash: true, ..Default::default() };
         assert!(upgrade_args("A.B", &o).contains(&"--ignore-security-hash".to_string()));
         assert!(!upgrade_args("A.B", &UpgradeOptions::default()).contains(&"--ignore-security-hash".to_string()));
+    }
+
+    #[test]
+    fn force_flag_only_when_requested() {
+        let forced = UpgradeOptions { force: true, ..Default::default() };
+        assert!(upgrade_args("A.B", &forced).ends_with(&s(&["--force"])));
+        assert!(upgrade_by_name_args("A B", &forced).contains(&"--force".to_string()));
+        assert!(!upgrade_args("A.B", &UpgradeOptions::default()).contains(&"--force".to_string()));
+        // The same command the user ran by hand to rescue a stuck package.
+        assert_eq!(
+            install_args("Microsoft.PowerShell", "winget", false, true),
+            s(&[
+                "install",
+                "--id",
+                "Microsoft.PowerShell",
+                "--exact",
+                "--accept-package-agreements",
+                "--accept-source-agreements",
+                "--disable-interactivity",
+                "--source",
+                "winget",
+                "--force"
+            ])
+        );
+        assert!(!install_args("A.B", "", false, false).contains(&"--force".to_string()));
+        assert!(!uninstall_args("A.B", "", false).contains(&"--force".to_string()));
     }
 
     #[test]

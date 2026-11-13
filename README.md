@@ -14,7 +14,7 @@ running.
 - Check only the packages you want and update them one at a time
 - Search by name, ID, or version
 - Uninstall selected apps, or reinstall apps that winget can't upgrade in place
-- Options for silent install, unknown versions, pinned packages, and skipping the hash check
+- Options for silent install, unknown versions, pinned packages, skipping the hash check, and force install
 - Per-package status plus the raw `winget` log
 - UI in Korean and English
 - A single ~7 MB exe that starts instantly — nothing is unpacked on launch
@@ -68,10 +68,13 @@ Depending on the options you enable, these flags are added:
 | Include unknown versions | `--include-unknown` | Includes packages whose installed version can't be detected. |
 | Include pinned | `--include-pinned` | Includes pinned packages when winget doesn't block them. |
 | Ignore hash check | `--ignore-security-hash` | Installs even when the installer hash doesn't match the manifest. Use only for sources you trust. |
+| Force install | `--force` | Skips non-security winget checks when upgrading. Also applies to the install step of a reinstall. |
 
 When winget truncates a package ID in its table output, the app resolves the full ID from `winget export`, then `winget list`, then `winget search` before acting on it; IDs that stay ambiguous are refused.
 
 When winget reports that a package's install technology changed (so an in-place upgrade is impossible), the app offers a reinstall instead: it uninstalls the app and then installs the latest version fresh, after a confirmation dialog.
+
+When an upgrade fails because winget can't find the installed package (even after retrying by name), the app offers a **Force install** action. After you confirm the dialog, which lists the exact commands, it runs `winget install --id <PackageId> --exact --source <source> --force` to install the latest version over the existing copy. It never does this on its own.
 
 ## Tests
 

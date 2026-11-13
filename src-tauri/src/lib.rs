@@ -22,6 +22,7 @@ struct Options {
     include_unknown: bool,
     include_pinned: bool,
     ignore_hash: bool,
+    force: bool,
 }
 
 fn select_known(state: &AppState, ids: &[String]) -> Vec<Package> {
@@ -60,6 +61,7 @@ async fn upgrade_selected(
         include_unknown: o.include_unknown,
         include_pinned: o.include_pinned,
         ignore_hash: o.ignore_hash,
+        force: o.force,
     };
     let runner = state.runner.clone();
     blocking(move || runner.upgrade_selected(&packages, &upgrade)).await
@@ -85,8 +87,9 @@ async fn uninstall_selected(
     Ok(results)
 }
 
+/// Runs only after the user confirms the force-install dialog in the renderer.
 #[tauri::command]
-async fn reinstall_selected(
+async fn force_install_selected(
     state: State<'_, AppState>,
     ids: Vec<String>,
     options: Option<Options>,
@@ -97,7 +100,22 @@ async fn reinstall_selected(
     }
     let silent = options.unwrap_or_default().silent;
     let runner = state.runner.clone();
-    blocking(move || runner.reinstall_selected(&packages, silent)).await
+    blocking(move || runner.force_install_selected(&packages, silent)).await
+}
+
+#[tauri::command]
+async fn reinstall_selected(
+    state: State<'_, AppState>,
+    ids: Vec<String>,
+    options: Option<Options>,
+) -> Result<Vec<ItemResult>, String> {
+    let packages = select_known(&state, &ids);
+    if packages.is_empty() {
+        return Ok(Vec::new());
+    }
+    let o = options.unwrap_or_default();
+    let runner = state.runner.clone();
+    blocking(move || runner.reinstall_selected(&packages, o.silent, o.force)).await
 }
 
 #[tauri::command]
@@ -194,6 +212,7 @@ pub fn run() {
             upgrade_selected,
             uninstall_selected,
             reinstall_selected,
+            force_install_selected,
             cancel_upgrade,
             is_elevated,
             restart_elevated
