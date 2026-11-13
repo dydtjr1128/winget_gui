@@ -1,6 +1,6 @@
 # Winget GUI
 
-An Electron desktop app that puts a GUI on top of Windows `winget`, so you can pick exactly which packages to update instead of upgrading everything at once.
+A small Windows desktop app (Tauri 2 + React, Rust backend) that puts a GUI on top of `winget`, so you can pick exactly which packages to update instead of upgrading everything at once.
 
 ![Winget GUI 업데이트 진행 화면](docs/images/winget-gui-update-progress.png)
 
@@ -17,11 +17,13 @@ running.
 - Options for silent install, unknown versions, pinned packages, and skipping the hash check
 - Per-package status plus the raw `winget` log
 - UI in Korean and English
+- A single ~7 MB exe that starts instantly — nothing is unpacked on launch
 
 ## Requirements
 
 - Windows 10/11 with `winget` available
-- Node.js and npm for development or packaging
+- WebView2 runtime (included with Windows 11; preinstalled on most Windows 10 machines)
+- For development: Node.js/npm and the Rust stable toolchain (MSVC)
 
 ## Running
 
@@ -30,35 +32,24 @@ npm install
 npm start
 ```
 
-`npm start` builds the renderer and launches the Electron app. Opening `dist/index.html` in a browser won't do anything useful — the app needs Electron to talk to `winget`.
+`npm start` runs `tauri dev`: it starts the Vite dev server and launches the app with hot reload. Opening `dist/index.html` in a browser won't do anything useful — the app needs its Rust backend to talk to `winget`.
 
-For development with hot reload:
-
-```powershell
-npm run dev:app
-```
-
-## Building a portable exe
+## Building
 
 ```powershell
-npm run portable
+npm run portable      # release\Winget-GUI-Portable-<version>-x64.exe
+npm run release:win   # portable exe + release\Winget-GUI-Setup-<version>-x64.exe (NSIS)
 ```
 
-This produces:
-
-```text
-release\Winget GUI Portable\Winget GUI.exe
-```
-
-Copy the `Winget GUI Portable` folder anywhere and double-click the exe. No installation needed.
+The portable exe is a single file: copy it anywhere and double-click it. No installation needed.
 
 ## Administrator rights
 
-The packaged exe always asks for elevation (UAC) on launch, since installing and removing packages often requires admin rights.
+Release builds always ask for elevation (UAC) on launch, since installing and removing packages often requires admin rights.
 
-In development mode (`npm start`, `npm run dev:app`) the manifest doesn't apply, so the app starts unelevated. Use the "Restart as Admin" button inside the app if you need elevation there.
+In development mode (`npm start`) the app starts unelevated. Use the "Restart as Admin" button inside the app if you need elevation there.
 
-Because the app always runs elevated, anything that tampers with the portable folder would run as administrator too. The build isn't code-signed, so keep it in a location regular users can't write to.
+Because the app runs elevated, it resolves `winget.exe` from the admin-only `WindowsApps` install first and runs it from `System32`, so a planted `winget.exe` elsewhere on `PATH` is not picked up. The build isn't code-signed, so keep the exe in a location regular users can't write to.
 
 ## How updates run
 
@@ -77,24 +68,18 @@ Depending on the options you enable, these flags are added:
 | Include pinned | `--include-pinned` | Includes pinned packages when winget doesn't block them. |
 | Ignore hash check | `--ignore-security-hash` | Installs even when the installer hash doesn't match the manifest. Use only for sources you trust. |
 
+When winget truncates a package ID in its table output, the app resolves the full ID from `winget export`, then `winget list`, then `winget search` before acting on it; IDs that stay ambiguous are refused.
+
 When winget reports that a package's install technology changed (so an in-place upgrade is impossible), the app offers a reinstall instead: it uninstalls the app and then installs the latest version fresh, after a confirmation dialog.
 
 ## Tests
 
 ```powershell
-npm test
+npm test            # renderer, i18n, and release config tests
+npm run test:rust   # Rust parser, resolver, args, and runner tests
 ```
 
-For the Electron progress UI smoke check on Windows:
-
-```powershell
-npm run build
-node_modules/.bin/electron.cmd tests/electron-progress-smoke.cjs --dist
-```
-
-This opens the real desktop UI with a test runner; it does not install or remove
-packages. Add `--real-list` to check actual winget list retrieval. The desktop
-smoke check is separate from `npm test`.
+Pull requests run both suites plus `cargo clippy` and a Tauri build in GitHub Actions.
 
 ## Contributing
 
@@ -109,16 +94,17 @@ written in Korean with a short summary at the top.
 The common guidelines and forms are adapted from
 [Project Starter Kit](https://github.com/dydtjr1128/project-starter-kit/tree/f39b580c4a836fc5e13527eb45fdcc63d3e0f1e4/templates/common).
 They are maintained as local copies; compare upstream changes and preserve this
-project's Electron validation and release rules when updating them.
+project's validation and release rules when updating them.
 
 ## Project layout
 
 ```text
-electron/              Electron main process, preload, winget execution logic
-src/                   React renderer UI
+src-tauri/             Tauri app: Rust winget backend (parser, resolver, args, runner) and config
+src/                   React renderer UI; src/tauriBridge.mjs is the backend API boundary
 public/                Static app icon
+build/                 App icon used for the exe and installer
 docs/images/           Screenshots for the README
-scripts/               Portable packaging script
-tests/                 Parser, runner, and packaging tests
-release/               Portable build output
+scripts/               Release artifact collection
+tests/                 Renderer and release config tests
+release/               Build output
 ```

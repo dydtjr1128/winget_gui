@@ -1,3 +1,5 @@
+// Must run before App.jsx is evaluated: it installs the Tauri-backed window APIs.
+import './tauriBridge.mjs';
 import React from 'react';
 import { createRoot } from 'react-dom/client';
 import 'pretendard/dist/web/variable/pretendardvariable.css';

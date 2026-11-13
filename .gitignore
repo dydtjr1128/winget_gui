@@ -41,3 +41,7 @@ Desktop.ini
 
 # Local screenshots / ad-hoc exports
 winget-gui-desktop.png
+
+# Tauri build output
+src-tauri/target/
+src-tauri/gen/

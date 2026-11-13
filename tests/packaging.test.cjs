@@ -6,7 +6,7 @@ const path = require('node:path');
 
 const root = path.resolve(__dirname, '..');
 
-test('vite build uses relative asset URLs for file-based Electron loading', async () => {
+test('vite build uses relative asset URLs so the bundled frontend loads from any base', async () => {
   const configUrl = pathToFileURL(path.resolve(root, 'vite.config.mjs')).href;
   const config = (await import(configUrl)).default;
 
