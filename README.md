@@ -18,6 +18,7 @@ running.
 - Per-package status plus the raw `winget` log
 - UI in Korean and English
 - A single ~7 MB exe that starts instantly — nothing is unpacked on launch
+- Shows the last loaded list right away on launch (clearly marked) while the slow `winget upgrade` refresh runs; actions stay disabled until the fresh list arrives
 
 ## Requirements
 

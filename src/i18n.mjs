@@ -110,6 +110,7 @@ const dictionaries = {
     'logs.empty': '아직 로그가 없습니다.',
     'alerts.countMismatch': 'winget은 {wingetCount}개라고 보고했지만 표에는 {displayedCount}개가 표시됐습니다.',
     'alerts.unknownHidden': '버전 미확인 {count}개는 숨겨질 수 있습니다.',
+    'alerts.cachedList': '{time} 기준 이전 목록 · 최신 목록 확인 중',
     'alerts.failureSummary': '실패 {count}개: {summary}',
     'sidebar.kicker': 'winget upgrade',
     'sidebar.title': '업데이트',
@@ -268,6 +269,7 @@ const dictionaries = {
     'logs.empty': 'No logs yet.',
     'alerts.countMismatch': 'winget reported {wingetCount}, but the table shows {displayedCount}.',
     'alerts.unknownHidden': '{count} unknown-version packages may be hidden.',
+    'alerts.cachedList': 'List from {time} · checking for updates',
     'alerts.failureSummary': '{count} failed: {summary}',
     'sidebar.kicker': 'winget upgrade',
     'sidebar.title': 'Updates',
@@ -397,6 +399,18 @@ export function createTranslator(locale) {
       return interpolate(template, values);
     }
   };
+}
+
+// Month, day and time, for timestamps that may be from an earlier day.
+export function formatDateTimeLabel(date = new Date(), locale = fallbackLocale) {
+  const { formatLocale } = createTranslator(locale);
+
+  return new Intl.DateTimeFormat(formatLocale, {
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit'
+  }).format(date);
 }
 
 export function formatTimeLabel(date = new Date(), locale = fallbackLocale) {
