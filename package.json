@@ -1,6 +1,6 @@
 {
   "name": "winget-gui",
-  "version": "0.1.17",
+  "version": "1.0.0",
   "private": true,
   "description": "Tauri GUI for selecting and running winget package upgrades.",
   "scripts": {
