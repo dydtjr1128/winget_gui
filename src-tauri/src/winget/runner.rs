@@ -612,8 +612,36 @@ impl Runner {
         results
     }
 
+    /// Installs the latest version over the existing copy with `--force`, the
+    /// same rescue as `winget install --id <id> -e --source <src> --force`.
+    /// Only run on the user's explicit, confirmed request from the UI.
+    pub fn force_install_selected(&self, packages: &[Package], silent: bool) -> Vec<ItemResult> {
+        let token = self.begin();
+        let mut results = Vec::new();
+        for item in packages {
+            if token.load(Ordering::SeqCst) {
+                results.push(Self::skipped(item, "force-install"));
+                continue;
+            }
+            self.start(item, "force-install", "강제 설치");
+            if parser::has_truncated_marker(&item.row.id) {
+                self.complete(&mut results, Self::truncated_refusal(item, "force-install", "강제 설치"));
+                continue;
+            }
+            let result = self.run_winget(
+                &token,
+                &args::install_args(&item.row.id, &item.row.source, silent, true),
+                true,
+                false,
+            );
+            self.complete(&mut results, Self::from_run(item, "force-install", &result));
+        }
+        (self.emit)("winget:queue-complete", json!(results));
+        results
+    }
+
     /// Uninstall-then-install for packages whose installer technology changed.
-    pub fn reinstall_selected(&self, packages: &[Package], silent: bool) -> Vec<ItemResult> {
+    pub fn reinstall_selected(&self, packages: &[Package], silent: bool, force: bool) -> Vec<ItemResult> {
         let token = self.begin();
         let mut results = Vec::new();
         for item in packages {
@@ -635,7 +663,7 @@ impl Runner {
                 continue;
             }
             let install =
-                self.run_winget(&token, &args::install_args(&item.row.id, &item.row.source, silent), true, false);
+                self.run_winget(&token, &args::install_args(&item.row.id, &item.row.source, silent, force), true, false);
             let mut r = Self::from_run(item, "reinstall", &install);
             r.phase = Some("install".into());
             self.complete(&mut results, r);
@@ -757,6 +785,50 @@ mod tests {
     }
 
     #[test]
+    fn upgrade_never_escalates_to_install_on_its_own() {
+        // Even with --force on, a not-found upgrade stays a failure; the forced
+        // install is a separate action the user must confirm.
+        let (runner, calls, _) = fake(|_, _| fail(NOT_FOUND));
+        let o = UpgradeOptions { force: true, ..Default::default() };
+        let results = runner.upgrade_selected(&[pkg("Microsoft.PowerShell", "PowerShell 7", "winget")], &o);
+        let calls = calls.lock().unwrap();
+        assert!(calls.iter().all(|c| c.starts_with("upgrade") && c.ends_with("--force")), "{calls:?}");
+        assert_eq!(results[0].failure_kind.as_deref(), Some("not-found"));
+    }
+
+    #[test]
+    fn force_install_runs_the_manual_rescue_command() {
+        let (runner, calls, events) = fake(|_, _| ok("설치 성공"));
+        let results = runner.force_install_selected(&[pkg("Microsoft.PowerShell", "PowerShell 7", "winget")], true);
+        assert_eq!(
+            calls.lock().unwrap().as_slice(),
+            ["install --id Microsoft.PowerShell --exact --accept-package-agreements --accept-source-agreements --disable-interactivity --source winget --silent --force"]
+        );
+        assert!(results[0].ok);
+        assert_eq!(results[0].operation, "force-install");
+        let events = events.lock().unwrap();
+        let start = events.iter().find(|(c, _)| c == "winget:package-start").unwrap();
+        assert_eq!(start.1["operation"], "force-install");
+    }
+
+    #[test]
+    fn force_install_refuses_truncated_ids() {
+        let (runner, calls, _) = fake(|_, _| ok(""));
+        let results = runner.force_install_selected(&[pkg("Microsoft.PowerSh…", "PowerShell", "winget")], false);
+        assert!(calls.lock().unwrap().is_empty());
+        assert_eq!(results[0].failure_kind.as_deref(), Some("id-resolution"));
+    }
+
+    #[test]
+    fn reinstall_passes_force_to_the_install_step_only() {
+        let (runner, calls, _) = fake(|_, _| ok(""));
+        runner.reinstall_selected(&[pkg("Foo.Bar", "Foo", "winget")], false, true);
+        let calls = calls.lock().unwrap();
+        assert!(!calls[0].contains("--force"));
+        assert!(calls[1].starts_with("install") && calls[1].ends_with("--force"));
+    }
+
+    #[test]
     fn name_retry_keeps_not_found_when_it_also_fails() {
         let (runner, _, _) = fake(|_, _| fail(NOT_FOUND));
         let results = runner.upgrade_selected(&[pkg("A.B", "Some App", "")], &UpgradeOptions::default());
@@ -798,7 +870,7 @@ mod tests {
         let truncated = [pkg("TheDocumentFoundation.Libr…", "LibreOffice", "winget")];
         let upgrade = runner.upgrade_selected(&truncated, &UpgradeOptions::default());
         let uninstall = runner.uninstall_selected(&truncated, false);
-        let reinstall = runner.reinstall_selected(&truncated, false);
+        let reinstall = runner.reinstall_selected(&truncated, false, false);
         assert!(calls.lock().unwrap().is_empty());
         for r in [&upgrade[0], &uninstall[0], &reinstall[0]] {
             assert_eq!(r.failure_kind.as_deref(), Some("id-resolution"));
@@ -808,7 +880,7 @@ mod tests {
     #[test]
     fn reinstall_uninstalls_then_installs_from_same_source() {
         let (runner, calls, _) = fake(|_, _| ok(""));
-        let results = runner.reinstall_selected(&[pkg("Foo.Bar", "Foo", "winget")], false);
+        let results = runner.reinstall_selected(&[pkg("Foo.Bar", "Foo", "winget")], false, false);
         let calls = calls.lock().unwrap();
         assert!(calls[0].starts_with("uninstall --id Foo.Bar"));
         assert!(calls[1].starts_with("install --id Foo.Bar") && calls[1].contains("--source winget"));
@@ -818,7 +890,7 @@ mod tests {
     #[test]
     fn reinstall_skips_install_when_uninstall_fails() {
         let (runner, calls, _) = fake(|_, _| fail("Error 1730 must be an Administrator"));
-        let results = runner.reinstall_selected(&[pkg("Foo.Bar", "Foo", "")], false);
+        let results = runner.reinstall_selected(&[pkg("Foo.Bar", "Foo", "")], false, false);
         assert_eq!(calls.lock().unwrap().len(), 1);
         assert_eq!(results[0].phase.as_deref(), Some("uninstall"));
         assert_eq!(results[0].failure_kind.as_deref(), Some("requires-admin"));

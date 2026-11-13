@@ -39,6 +39,7 @@ function installTauriBridge() {
     upgradeSelected: (ids, options) => call('upgrade_selected', { ids, options }),
     uninstallSelected: (ids, options) => call('uninstall_selected', { ids, options }),
     reinstallSelected: (ids, options) => call('reinstall_selected', { ids, options }),
+    forceInstallSelected: (ids, options) => call('force_install_selected', { ids, options }),
     cancelUpgrade: () => call('cancel_upgrade'),
     // The backend batches log frames; replay each entry in order.
     onLog: (callback) =>
