@@ -1586,6 +1586,10 @@ export default function App() {
               </h2>
               <p id="reinstall-dialog-description">{t('reinstall.description')}</p>
             </div>
+            <div className="remove-notice" role="note">
+              <Trash2 size={18} aria-hidden="true" />
+              <strong>{t('reinstall.removeNotice')}</strong>
+            </div>
             <ul className="uninstall-list">
               {reinstallTarget.slice(0, 4).map((item) => (
                 <li key={item.id}>
