@@ -180,6 +180,14 @@ function failureAdviceForItem(item, t) {
   }
 
   if (item.lastAction === 'reinstall') {
+    if (item.failurePhase === 'precheck') {
+      return t(
+        failureKindFor(item) === 'hash'
+          ? 'failure.advice.reinstall-precheck-hash'
+          : 'failure.advice.reinstall-precheck'
+      );
+    }
+
     return t(
       item.failurePhase === 'install'
         ? 'failure.advice.reinstall-install'
@@ -1577,6 +1585,10 @@ export default function App() {
                 {t('reinstall.title', { count: reinstallTarget.length })}
               </h2>
               <p id="reinstall-dialog-description">{t('reinstall.description')}</p>
+            </div>
+            <div className="remove-notice" role="note">
+              <Trash2 size={18} aria-hidden="true" />
+              <strong>{t('reinstall.removeNotice')}</strong>
             </div>
             <ul className="uninstall-list">
               {reinstallTarget.slice(0, 4).map((item) => (

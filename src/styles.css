@@ -673,6 +673,30 @@ button {
   line-height: 1.42;
 }
 
+/* Reinstall removes the app before installing; make that impossible to miss. */
+.remove-notice {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 11px 13px;
+  color: #991b1b;
+  border: 1.5px solid rgba(220, 38, 38, 0.45);
+  border-radius: 12px;
+  background: rgba(254, 226, 226, 0.85);
+  font-size: 13.5px;
+  line-height: 1.4;
+}
+
+.remove-notice svg {
+  flex: 0 0 auto;
+  color: #dc2626;
+}
+
+.remove-notice strong {
+  font-weight: 750;
+}
+
 .uninstall-warning svg {
   flex: 0 0 auto;
   margin-top: 1px;
