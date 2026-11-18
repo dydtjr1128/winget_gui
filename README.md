@@ -72,7 +72,7 @@ Depending on the options you enable, these flags are added:
 
 When winget truncates a package ID in its table output, the app resolves the full ID from `winget export`, then `winget list`, then `winget search` before acting on it; IDs that stay ambiguous are refused.
 
-When winget reports that a package's install technology changed (so an in-place upgrade is impossible), the app offers a reinstall instead: it uninstalls the app and then installs the latest version fresh, after a confirmation dialog.
+When winget reports that a package's install technology changed (so an in-place upgrade is impossible), the app offers a reinstall instead: after a confirmation dialog it first downloads the latest installer with `winget download` (which verifies its hash against the manifest), then uninstalls the app and installs the latest version fresh. If that download or hash check fails, nothing is uninstalled and the existing app is kept. Microsoft Store packages skip the download check.
 
 When an upgrade fails because winget can't find the installed package (even after retrying by name), the app offers a **Force install** action. After you confirm the dialog, which lists the exact commands, it runs `winget install --id <PackageId> --exact --source <source> --force` to install the latest version over the existing copy. It never does this on its own.
 

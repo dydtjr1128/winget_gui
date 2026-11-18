@@ -121,6 +121,28 @@ pub fn install_args(id: &str, source: &str, silent: bool, force: bool) -> Vec<St
     args
 }
 
+/// Downloads (and hash-verifies) the latest installer without installing it.
+/// Used as the reinstall precheck: if the installer cannot be fetched or its
+/// hash does not match the manifest, the reinstall stops before uninstalling.
+pub fn download_args(id: &str, source: &str, download_dir: &str) -> Vec<String> {
+    let mut args = s(&[
+        "download",
+        "--id",
+        id,
+        "--exact",
+        "--download-directory",
+        download_dir,
+        "--skip-dependencies",
+        "--accept-package-agreements",
+        "--accept-source-agreements",
+        "--disable-interactivity",
+    ]);
+    if !source.is_empty() {
+        args.extend(s(&["--source", source]));
+    }
+    args
+}
+
 pub fn uninstall_args(id: &str, source: &str, silent: bool) -> Vec<String> {
     id_command("uninstall", id, source, silent, false)
 }
@@ -214,6 +236,29 @@ mod tests {
             export_args("C:\\Temp\\x.json"),
             s(&["export", "--output", "C:\\Temp\\x.json", "--include-versions", "--accept-source-agreements", "--disable-interactivity"])
         );
+    }
+
+    #[test]
+    fn download_args_fetch_into_the_given_directory_without_dependencies() {
+        assert_eq!(
+            download_args("Git.Git", "winget", "C:\\Temp\\dl"),
+            s(&[
+                "download",
+                "--id",
+                "Git.Git",
+                "--exact",
+                "--download-directory",
+                "C:\\Temp\\dl",
+                "--skip-dependencies",
+                "--accept-package-agreements",
+                "--accept-source-agreements",
+                "--disable-interactivity",
+                "--source",
+                "winget"
+            ])
+        );
+        assert!(!download_args("Git.Git", "", "C:\\Temp").contains(&"--source".to_string()));
+        assert!(!download_args("Git.Git", "", "C:\\Temp").contains(&"--ignore-security-hash".to_string()));
     }
 
     #[test]

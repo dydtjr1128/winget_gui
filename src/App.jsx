@@ -180,6 +180,14 @@ function failureAdviceForItem(item, t) {
   }
 
   if (item.lastAction === 'reinstall') {
+    if (item.failurePhase === 'precheck') {
+      return t(
+        failureKindFor(item) === 'hash'
+          ? 'failure.advice.reinstall-precheck-hash'
+          : 'failure.advice.reinstall-precheck'
+      );
+    }
+
     return t(
       item.failurePhase === 'install'
         ? 'failure.advice.reinstall-install'

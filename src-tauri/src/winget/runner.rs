@@ -73,6 +73,17 @@ pub struct ItemResult {
     pub retried_by_name: Option<bool>,
 }
 
+/// Creates a fresh, uniquely named directory under the temp dir. `create_dir`
+/// fails if the path already exists, so a pre-planted directory is never reused.
+fn private_temp_dir(prefix: &str) -> Option<PathBuf> {
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or_default();
+    let dir = std::env::temp_dir().join(format!("{prefix}-{}-{stamp}", std::process::id()));
+    std::fs::create_dir(&dir).ok().map(|_| dir)
+}
+
 #[derive(Debug, Default)]
 pub struct RunResult {
     pub ok: bool,
@@ -394,14 +405,9 @@ impl Runner {
     /// `winget export` emits full ids as JSON, the most reliable way to resolve a
     /// truncated table id. Written into a private, freshly created temp directory.
     fn load_export_packages(&self, token: &AtomicBool) -> Vec<ExportPackage> {
-        let stamp = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_nanos())
-            .unwrap_or_default();
-        let dir = std::env::temp_dir().join(format!("winget-gui-export-{}-{stamp}", std::process::id()));
-        if std::fs::create_dir(&dir).is_err() {
+        let Some(dir) = private_temp_dir("winget-gui-export") else {
             return Vec::new();
-        }
+        };
         let path = dir.join("packages.json");
         // export may exit non-zero when some packages are absent from a source,
         // so read the file regardless of the exit code.
@@ -640,7 +646,35 @@ impl Runner {
         results
     }
 
-    /// Uninstall-then-install for packages whose installer technology changed.
+    /// Fetches the latest installer into a private temp directory with
+    /// `winget download`, which verifies its hash against the manifest. A
+    /// failure here (hash mismatch, download error, package gone) means the
+    /// install step would fail too, so the reinstall must stop before removing
+    /// anything. Microsoft Store packages are skipped: their downloads need
+    /// Entra ID sign-in and carry no installer hash to verify.
+    fn precheck_installer(&self, token: &AtomicBool, item: &Package) -> RunResult {
+        let label = if item.row.name.is_empty() { &item.row.id } else { &item.row.name };
+        if item.row.source == "msstore" {
+            self.log(format!("Microsoft Store 패키지는 설치 파일 사전 검증을 건너뜁니다: {label}"));
+            return RunResult { ok: true, code: Some(0), ..Default::default() };
+        }
+        self.log(format!("설치 파일 사전 검증 중(다운로드·해시 확인): {label}"));
+        let Some(dir) = private_temp_dir("winget-gui-precheck") else {
+            return RunResult {
+                code: Some(-1),
+                stderr: "사전 검증용 임시 폴더를 만들지 못했습니다.".into(),
+                ..Default::default()
+            };
+        };
+        let args = args::download_args(&item.row.id, &item.row.source, &dir.to_string_lossy());
+        let result = self.run_winget(token, &args, true, false);
+        let _ = std::fs::remove_dir_all(&dir);
+        result
+    }
+
+    /// Precheck-uninstall-install for packages whose installer technology
+    /// changed. The installer is downloaded and hash-verified first, so a
+    /// package that cannot be installed is never removed.
     pub fn reinstall_selected(&self, packages: &[Package], silent: bool, force: bool) -> Vec<ItemResult> {
         let token = self.begin();
         let mut results = Vec::new();
@@ -652,6 +686,18 @@ impl Runner {
             self.start(item, "reinstall", "재설치");
             if parser::has_truncated_marker(&item.row.id) {
                 self.complete(&mut results, Self::truncated_refusal(item, "reinstall", "재설치"));
+                continue;
+            }
+            let precheck = self.precheck_installer(&token, item);
+            if token.load(Ordering::SeqCst) {
+                self.complete(&mut results, Self::skipped(item, "reinstall"));
+                continue;
+            }
+            if !precheck.ok {
+                self.log(format!("설치 파일 사전 검증 실패로 제거하지 않고 중단합니다: {}", item.row.id));
+                let mut r = Self::from_run(item, "reinstall", &precheck);
+                r.phase = Some("precheck".into());
+                self.complete(&mut results, r);
                 continue;
             }
             let uninstall =
@@ -824,8 +870,9 @@ mod tests {
         let (runner, calls, _) = fake(|_, _| ok(""));
         runner.reinstall_selected(&[pkg("Foo.Bar", "Foo", "winget")], false, true);
         let calls = calls.lock().unwrap();
-        assert!(!calls[0].contains("--force"));
-        assert!(calls[1].starts_with("install") && calls[1].ends_with("--force"));
+        assert!(calls[0].starts_with("download") && !calls[0].contains("--force"));
+        assert!(calls[1].starts_with("uninstall") && !calls[1].contains("--force"));
+        assert!(calls[2].starts_with("install") && calls[2].ends_with("--force"));
     }
 
     #[test]
@@ -878,22 +925,73 @@ mod tests {
     }
 
     #[test]
-    fn reinstall_uninstalls_then_installs_from_same_source() {
+    fn reinstall_verifies_download_then_uninstalls_and_installs_from_same_source() {
         let (runner, calls, _) = fake(|_, _| ok(""));
         let results = runner.reinstall_selected(&[pkg("Foo.Bar", "Foo", "winget")], false, false);
         let calls = calls.lock().unwrap();
-        assert!(calls[0].starts_with("uninstall --id Foo.Bar"));
-        assert!(calls[1].starts_with("install --id Foo.Bar") && calls[1].contains("--source winget"));
+        assert_eq!(calls.len(), 3);
+        assert!(calls[0].starts_with("download --id Foo.Bar --exact --download-directory "));
+        assert!(calls[0].contains("winget-gui-precheck-") && calls[0].ends_with("--source winget"));
+        let dir = download_dir(&calls[0]);
+        assert!(!std::path::Path::new(&dir).exists(), "precheck dir must be removed: {dir}");
+        assert!(calls[1].starts_with("uninstall --id Foo.Bar"));
+        assert!(calls[2].starts_with("install --id Foo.Bar") && calls[2].contains("--source winget"));
         assert_eq!(results[0].phase.as_deref(), Some("install"));
     }
 
     #[test]
     fn reinstall_skips_install_when_uninstall_fails() {
-        let (runner, calls, _) = fake(|_, _| fail("Error 1730 must be an Administrator"));
+        let (runner, calls, _) = fake(|line, _| {
+            if line.starts_with("uninstall") { fail("Error 1730 must be an Administrator") } else { ok("") }
+        });
         let results = runner.reinstall_selected(&[pkg("Foo.Bar", "Foo", "")], false, false);
-        assert_eq!(calls.lock().unwrap().len(), 1);
+        assert_eq!(calls.lock().unwrap().len(), 2);
         assert_eq!(results[0].phase.as_deref(), Some("uninstall"));
         assert_eq!(results[0].failure_kind.as_deref(), Some("requires-admin"));
+    }
+
+    /// Extracts the `--download-directory` value from a recorded download call.
+    fn download_dir(line: &str) -> String {
+        let rest = line.split("--download-directory ").nth(1).unwrap();
+        rest.split(" --skip-dependencies").next().unwrap().to_string()
+    }
+
+    #[test]
+    fn reinstall_keeps_the_app_when_the_installer_hash_check_fails() {
+        let (runner, calls, _) = fake(|line, _| {
+            if line.starts_with("download") { fail("설치 관리자 해시가 일치하지 않습니다.") } else { ok("") }
+        });
+        let results = runner.reinstall_selected(&[pkg("IDmelon.IDmelonPairingTool", "IDmelon Pairing Tool", "winget")], false, false);
+        let calls = calls.lock().unwrap();
+        assert_eq!(calls.len(), 1, "{calls:?}");
+        assert!(calls[0].starts_with("download"));
+        assert!(!std::path::Path::new(&download_dir(&calls[0])).exists());
+        assert!(!results[0].ok);
+        assert_eq!(results[0].phase.as_deref(), Some("precheck"));
+        assert_eq!(results[0].failure_kind.as_deref(), Some("hash"));
+    }
+
+    #[test]
+    fn reinstall_skips_the_precheck_for_microsoft_store_packages() {
+        let (runner, calls, _) = fake(|_, _| ok(""));
+        let results = runner.reinstall_selected(&[pkg("9NBLGGH4NNS1", "App Installer", "msstore")], false, false);
+        let calls = calls.lock().unwrap();
+        assert_eq!(calls.len(), 2);
+        assert!(calls[0].starts_with("uninstall") && calls[1].starts_with("install"));
+        assert!(results[0].ok);
+    }
+
+    #[test]
+    fn reinstall_stops_before_uninstalling_when_cancelled_during_the_precheck() {
+        let (runner, calls, _) = fake(|_, cancelled| {
+            cancelled.store(true, Ordering::SeqCst);
+            fail("")
+        });
+        let results = runner.reinstall_selected(&[pkg("Foo.Bar", "Foo", "winget")], false, false);
+        let calls = calls.lock().unwrap();
+        assert_eq!(calls.len(), 1);
+        assert!(calls[0].starts_with("download"));
+        assert_eq!(results[0].skipped, Some(true));
     }
 
     fn hash_calls(export: &'static str) -> Vec<String> {
