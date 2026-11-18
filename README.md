@@ -77,7 +77,7 @@ Depending on the options you enable, these flags are added:
 | Include pinned | `--include-pinned` | Includes pinned packages when winget doesn't block them. |
 | Ignore hash check | `--ignore-security-hash` | Installs even when the installer hash doesn't match the manifest. Use only for sources you trust. |
 
-When winget reports that a package's install technology changed (so an in-place upgrade is impossible), the app offers a reinstall instead: it uninstalls the app and then installs the latest version fresh, after a confirmation dialog.
+When winget reports that a package's install technology changed (so an in-place upgrade is impossible), the app offers a reinstall instead: after a confirmation dialog it first downloads the latest installer with `winget download` (which verifies its hash against the manifest), then uninstalls the app and installs the latest version fresh. If that download or hash check fails, nothing is uninstalled and the existing app is kept. Microsoft Store packages skip the download check.
 
 ## Tests
 

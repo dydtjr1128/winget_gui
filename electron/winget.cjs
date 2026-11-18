@@ -13,6 +13,7 @@ module.exports = {
   buildExportArgs: args.buildExportArgs,
   buildListArgs: args.buildListArgs,
   buildInstallArgs: args.buildInstallArgs,
+  buildDownloadArgs: args.buildDownloadArgs,
   buildListByIdArgs: args.buildListByIdArgs,
   buildSearchArgs: args.buildSearchArgs,
   buildUninstallArgs: args.buildUninstallArgs,

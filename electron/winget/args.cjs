@@ -146,6 +146,38 @@ function buildInstallArgs(id, options = {}) {
   return args;
 }
 
+// Downloads (and hash-verifies) the latest installer without installing it.
+// Used as a reinstall precheck: if the installer cannot be fetched or its hash
+// does not match the manifest, the reinstall stops before anything is removed.
+function buildDownloadArgs(id, options = {}) {
+  if (!id || typeof id !== 'string') {
+    throw new Error('A package id is required.');
+  }
+
+  if (!options.downloadDirectory || typeof options.downloadDirectory !== 'string') {
+    throw new Error('A download directory is required.');
+  }
+
+  const args = [
+    'download',
+    '--id',
+    id,
+    '--exact',
+    '--download-directory',
+    options.downloadDirectory,
+    '--skip-dependencies',
+    '--accept-package-agreements',
+    '--accept-source-agreements',
+    '--disable-interactivity'
+  ];
+
+  if (options.source) {
+    args.push('--source', options.source);
+  }
+
+  return args;
+}
+
 function buildUninstallArgs(id, options = {}) {
   if (!id || typeof id !== 'string') {
     throw new Error('A package id is required.');
@@ -193,6 +225,7 @@ module.exports = {
   buildUpgradeArgs,
   buildUpgradeByNameArgs,
   buildInstallArgs,
+  buildDownloadArgs,
   buildUninstallArgs,
   buildEnableHashOverrideArgs,
   buildDisableHashOverrideArgs,

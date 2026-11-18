@@ -1,6 +1,8 @@
 const assert = require('node:assert/strict');
 const test = require('node:test');
 const { EventEmitter } = require('node:events');
+const fs = require('node:fs');
+const path = require('node:path');
 
 const { createWingetRunner } = require('../electron/winget.cjs');
 
@@ -290,7 +292,7 @@ test('uninstallSelected refuses to spawn a truncated package id', async () => {
   assert.equal(results[0].operation, 'uninstall');
 });
 
-test('reinstallSelected uninstalls first, then installs fresh from the same source', async () => {
+test('reinstallSelected verifies the installer download, then uninstalls and installs fresh from the same source', async () => {
   const calls = [];
   const starts = [];
   const completions = [];
@@ -309,8 +311,25 @@ test('reinstallSelected uninstalls first, then installs fresh from the same sour
     { id: 'JanDeDobbeleer.OhMyPosh', name: 'Oh My Posh', source: 'winget' }
   ], { silent: true });
 
-  assert.equal(calls.length, 2);
+  assert.equal(calls.length, 3);
+  const downloadDir = calls[0][5];
   assert.deepEqual(calls[0], [
+    'download',
+    '--id',
+    'JanDeDobbeleer.OhMyPosh',
+    '--exact',
+    '--download-directory',
+    downloadDir,
+    '--skip-dependencies',
+    '--accept-package-agreements',
+    '--accept-source-agreements',
+    '--disable-interactivity',
+    '--source',
+    'winget'
+  ]);
+  assert.match(path.basename(downloadDir), /^winget-gui-precheck-/);
+  assert.equal(fs.existsSync(downloadDir), false);
+  assert.deepEqual(calls[1], [
     'uninstall',
     '--id',
     'JanDeDobbeleer.OhMyPosh',
@@ -321,7 +340,7 @@ test('reinstallSelected uninstalls first, then installs fresh from the same sour
     'winget',
     '--silent'
   ]);
-  assert.deepEqual(calls[1], [
+  assert.deepEqual(calls[2], [
     'install',
     '--id',
     'JanDeDobbeleer.OhMyPosh',
@@ -354,11 +373,85 @@ test('reinstallSelected skips the install step when the uninstall fails', async 
     { id: 'JanDeDobbeleer.OhMyPosh', name: 'Oh My Posh', source: 'winget' }
   ]);
 
-  assert.equal(calls.length, 1);
-  assert.equal(calls[0][0], 'uninstall');
+  assert.equal(calls.length, 2);
+  assert.equal(calls[0][0], 'download');
+  assert.equal(calls[1][0], 'uninstall');
   assert.equal(results[0].ok, false);
   assert.equal(results[0].operation, 'reinstall');
   assert.equal(results[0].phase, 'uninstall');
+});
+
+test('reinstallSelected does not uninstall when the installer hash check fails', async () => {
+  const calls = [];
+  const fakeSpawn = (_cmd, args) => {
+    calls.push(args);
+    const child = makeFakeChild();
+    setImmediate(() => {
+      if (args[0] === 'download') {
+        child.stdout.emit('data', Buffer.from('설치 관리자 해시가 일치하지 않습니다.\r\n'));
+        child.emit('close', 2316632065);
+        return;
+      }
+      child.emit('close', 0);
+    });
+    return child;
+  };
+
+  const runner = createWingetRunner({ spawn: fakeSpawn });
+  const results = await runner.reinstallSelected([
+    { id: 'IDmelon.IDmelonPairingTool', name: 'IDmelon Pairing Tool', source: 'winget' }
+  ]);
+
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0][0], 'download');
+  assert.equal(fs.existsSync(calls[0][5]), false);
+  assert.equal(results[0].ok, false);
+  assert.equal(results[0].operation, 'reinstall');
+  assert.equal(results[0].phase, 'precheck');
+  assert.equal(results[0].failureKind, 'hash');
+});
+
+test('reinstallSelected skips the download precheck for Microsoft Store packages', async () => {
+  const calls = [];
+  const fakeSpawn = (_cmd, args) => {
+    calls.push(args);
+    const child = makeFakeChild();
+    setImmediate(() => child.emit('close', 0));
+    return child;
+  };
+
+  const runner = createWingetRunner({ spawn: fakeSpawn });
+  const results = await runner.reinstallSelected([
+    { id: '9NBLGGH4NNS1', name: 'App Installer', source: 'msstore' }
+  ]);
+
+  assert.deepEqual(calls.map((args) => args[0]), ['uninstall', 'install']);
+  assert.equal(results[0].ok, true);
+});
+
+test('reinstallSelected stops before uninstalling when cancelled during the precheck', async () => {
+  const calls = [];
+  let runner;
+  const fakeSpawn = (_cmd, args) => {
+    calls.push(args);
+    const child = makeFakeChild();
+    setImmediate(() => {
+      if (args[0] === 'download') {
+        runner.cancel();
+      }
+      child.emit('close', args[0] === 'download' ? 1 : 0);
+    });
+    return child;
+  };
+
+  runner = createWingetRunner({ spawn: fakeSpawn });
+  const results = await runner.reinstallSelected([
+    { id: 'JanDeDobbeleer.OhMyPosh', name: 'Oh My Posh', source: 'winget' }
+  ]);
+
+  assert.deepEqual(calls.map((args) => args[0]), ['download']);
+  assert.equal(results[0].ok, false);
+  assert.equal(results[0].skipped, true);
 });
 
 test('reinstallSelected refuses to spawn a truncated package id', async () => {

@@ -31,6 +31,7 @@ const {
   buildUpgradeArgs,
   buildUpgradeByNameArgs,
   buildInstallArgs,
+  buildDownloadArgs,
   buildUninstallArgs,
   buildEnableHashOverrideArgs,
   buildDisableHashOverrideArgs,
@@ -502,11 +503,45 @@ function createWingetRunner({ spawn: spawnImpl = spawn } = {}) {
     return results;
   }
 
-  // Uninstall-then-install for packages whose new version uses a different
-  // install technology (winget refuses the in-place upgrade). The install step
-  // runs only after a successful uninstall, so a failed removal never leaves a
-  // half-done state; a failed install after removal is reported with its phase
-  // so the UI can tell the user the app is currently uninstalled.
+  // Fetches the latest installer into a private temp directory with
+  // `winget download`, which verifies the installer hash against the manifest.
+  // A failure here (hash mismatch, download error, package missing) means the
+  // install step would fail too, so the reinstall must stop before uninstalling.
+  // The Microsoft Store source is skipped: its downloads need Entra ID sign-in
+  // and its packages carry no installer hash to verify.
+  async function precheckInstaller(item) {
+    if (item.source === 'msstore') {
+      events.emit('log', `Microsoft Store 패키지는 설치 파일 사전 검증을 건너뜁니다: ${item.name || item.id}`);
+      return { ok: true, code: 0, stdout: '', stderr: '' };
+    }
+
+    events.emit('log', `설치 파일 사전 검증 중(다운로드·해시 확인): ${item.name || item.id}`);
+    let downloadDir = '';
+    try {
+      downloadDir = fs.mkdtempSync(path.join(os.tmpdir(), 'winget-gui-precheck-'));
+      return await runWinget(
+        buildDownloadArgs(item.id, { source: item.source, downloadDirectory: downloadDir })
+      );
+    } catch (error) {
+      return { ok: false, code: -1, stdout: '', stderr: String(error?.message ?? error) };
+    } finally {
+      if (downloadDir) {
+        try {
+          fs.rmSync(downloadDir, { recursive: true, force: true });
+        } catch {
+          // Best-effort cleanup of the downloaded installer.
+        }
+      }
+    }
+  }
+
+  // Precheck-uninstall-install for packages whose new version uses a different
+  // install technology (winget refuses the in-place upgrade). The installer is
+  // downloaded and hash-verified first, so a package that cannot be installed is
+  // never removed. The install step runs only after a successful uninstall, so a
+  // failed removal never leaves a half-done state; a failed install after
+  // removal is reported with its phase so the UI can tell the user the app is
+  // currently uninstalled.
   async function reinstallSelected(packages, options = {}) {
     cancelled = false;
     const results = [];
@@ -538,6 +573,41 @@ function createWingetRunner({ spawn: spawnImpl = spawn } = {}) {
           failureDetail: `winget 목록에서 패키지 ID가 잘려 안전하게 재설치할 수 없습니다: ${item.id}`,
           stdout: '',
           stderr: ''
+        };
+        results.push(itemResult);
+        events.emit('package-complete', itemResult);
+        continue;
+      }
+
+      const precheckResult = await precheckInstaller(item);
+
+      if (cancelled) {
+        const itemResult = {
+          id: item.id,
+          name: item.name,
+          operation: 'reinstall',
+          ok: false,
+          code: null,
+          skipped: true
+        };
+        results.push(itemResult);
+        events.emit('package-complete', itemResult);
+        continue;
+      }
+
+      if (!precheckResult.ok) {
+        events.emit('log', `설치 파일 사전 검증 실패로 제거하지 않고 중단합니다: ${item.name || item.id}`);
+        const itemResult = {
+          id: item.id,
+          name: item.name,
+          operation: 'reinstall',
+          phase: 'precheck',
+          ok: false,
+          code: precheckResult.code,
+          failureKind: classifyWingetFailure(precheckResult),
+          failureDetail: summarizeWingetFailure(precheckResult),
+          stdout: precheckResult.stdout,
+          stderr: precheckResult.stderr
         };
         results.push(itemResult);
         events.emit('package-complete', itemResult);

@@ -2,6 +2,7 @@ const assert = require('node:assert/strict');
 const test = require('node:test');
 
 const {
+  buildDownloadArgs,
   buildExportArgs,
   buildInstallArgs,
   buildListArgs,
@@ -354,6 +355,26 @@ test('install arguments omit --source when the row had none and require an id', 
   assert.ok(!buildInstallArgs('Git.Git', {}).includes('--source'));
   assert.ok(!buildInstallArgs('Git.Git', { source: '' }).includes('--source'));
   assert.throws(() => buildInstallArgs(''));
+});
+
+test('buildDownloadArgs fetches the installer into the given directory without dependencies', () => {
+  assert.deepEqual(buildDownloadArgs('Git.Git', { source: 'winget', downloadDirectory: 'D:/dl/precheck' }), [
+    'download',
+    '--id',
+    'Git.Git',
+    '--exact',
+    '--download-directory',
+    'D:/dl/precheck',
+    '--skip-dependencies',
+    '--accept-package-agreements',
+    '--accept-source-agreements',
+    '--disable-interactivity',
+    '--source',
+    'winget'
+  ]);
+  assert.ok(!buildDownloadArgs('Git.Git', { downloadDirectory: 'D:/dl' }).includes('--source'));
+  assert.throws(() => buildDownloadArgs('', { downloadDirectory: 'D:/dl' }));
+  assert.throws(() => buildDownloadArgs('Git.Git', {}));
 });
 
 test('uninstall arguments do not inherit upgrade-only flags', () => {
